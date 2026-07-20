@@ -69,37 +69,52 @@ async def heal_cobol_fd_section(cobol_content: str, file_specs: list) -> str:
 
 async def run_mcp_pipeline_poc(session, modified_code: str):
     clean_name = program_name.replace('.cbl', '').upper().strip()
-    
-    dir_result = await session.call_tool("get_file_contents", arguments={"owner": REPO_OWNER, "repo": REPO_NAME, "path": "jcl"})
-    dir_data = json.loads(dir_result.content[0].text)
-    
+    final_code = modified_code
     jcl_content, jcl_path = None, None
-    for file_entry in dir_data:
-        file_name = file_entry.get("name", "")
-        if not (file_name.upper().endswith(".JCL")): continue
-        
-        path = f"jcl/{file_name}"
-        file_result = await session.call_tool("get_file_contents", arguments={"owner": REPO_OWNER, "repo": REPO_NAME, "path": path})
-        raw = file_result.content[0].text
-        try:
-            parsed = json.loads(raw)
-            content = base64.b64decode(parsed.get("content", "").replace("\n", "")).decode("utf-8")
-        except Exception:
-            content = raw
-            
-        if f"EXEC PGM={clean_name}" in content.upper():
-            jcl_content, jcl_path = content, path
-            break
-
-    if not jcl_content:
-        print(f"[WARN] No related configuration JCL discovered running PGM={clean_name}")
-        return
-
-    jcl_datasets = await extract_jcl_dd_allocations(jcl_content, program_name)
-    file_specs = [{"dd_name": ds.get("dd_name"), "actual_lrecl": ds.get("lrecl") or 80} for ds in jcl_datasets]
     
-    healed_cobol = await heal_cobol_fd_section(modified_code, file_specs)
-    await code_commit(session, healed_cobol)
+    # 1. Attempt to find matching JCL safely
+    try:
+        dir_result = await session.call_tool(
+            "get_file_contents", 
+            arguments={"owner": REPO_OWNER, "repo": REPO_NAME, "path": "jcl"}
+        )
+        dir_data = json.loads(dir_result.content[0].text)
+        
+        if isinstance(dir_data, list):
+            for file_entry in dir_data:
+                file_name = file_entry.get("name", "")
+                if not file_name.upper().endswith(".JCL"):
+                    continue
+                
+                path = f"jcl/{file_name}"
+                file_result = await session.call_tool(
+                    "get_file_contents", 
+                    arguments={"owner": REPO_OWNER, "repo": REPO_NAME, "path": path}
+                )
+                raw = file_result.content[0].text
+                try:
+                    parsed = json.loads(raw)
+                    content = base64.b64decode(parsed.get("content", "").replace("\n", "")).decode("utf-8")
+                except Exception:
+                    content = raw
+                    
+                if f"EXEC PGM={clean_name}" in content.upper():
+                    jcl_content, jcl_path = content, path
+                    break
+    except Exception as e:
+        print(f"[WARN] JCL directory not found or unreachable ({e}). Proceeding without JCL healing.")
+
+    # 2. Heal COBOL code if JCL was found, otherwise keep static analysis result
+    if jcl_content:
+        print(f"[INFO] Found matching JCL at '{jcl_path}'. Performing FD section healing...")
+        jcl_datasets = await extract_jcl_dd_allocations(jcl_content, program_name)
+        file_specs = [{"dd_name": ds.get("dd_name"), "actual_lrecl": ds.get("lrecl") or 80} for ds in jcl_datasets]
+        final_code = await heal_cobol_fd_section(modified_code, file_specs)
+    else:
+        print(f"[INFO] No matching JCL found for PGM={clean_name}. Proceeding with static analysis fixes.")
+
+    # 3. Always commit the final result (static analysis only OR static analysis + JCL healed)
+    await code_commit(session, final_code)
 
 async def static_analysis_check(session) -> str:
     file_path = f"src/{program_name}"
