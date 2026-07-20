@@ -1,0 +1,1094 @@
+================================================================================
+COBOL STATIC ANALYSIS RULES FOR LLM-BASED CODE REVIEW
+================================================================================
+
+================================================================================
+0. HOW TO APPLY THE RULES BELOW — READ THIS BEFORE FIXING ANYTHING
+================================================================================
+Every rule below has BAD/GOOD examples. These examples exist ONLY to teach you
+the SHAPE of a violation and the SHAPE of a safe fix. They are NOT code to
+copy into a real program. Follow these constraints exactly when turning a
+GOOD example into an actual fix:
+
+  0.1 Names are placeholders, not instructions
+  ----------------------------------------------
+  Field names (WS-EOF, WS-COUNT...), paragraph names (9999-INVALID-DATA-ERROR,
+  9999-SUBSCRIPT-ERROR, 9999-ZERO-DIVISOR-WARNING...), and file names in the
+  examples are illustrative only. When you fix a real program, you MUST use
+  that program's own existing names. Never introduce a name that does not
+  already appear in the program, and never rename anything that exists.
+
+  0.2 NEVER invent a new paragraph
+  ----------------------------------------------
+  Many GOOD examples call an error-handling paragraph with PERFORM (e.g.
+  PERFORM 9999-INVALID-DATA-ERROR). Before writing any such call:
+    a. Search the target program's PROCEDURE DIVISION for an existing
+       paragraph that already serves this purpose (an existing error
+       routine, abend routine, or EOF/reject paragraph).
+    b. If one exists, PERFORM that exact existing paragraph name instead —
+       do not use the example's placeholder name.
+    c. If NO such paragraph exists anywhere in the program, do NOT create
+       one, and do NOT add a PERFORM to a paragraph that isn't there. Use
+       the smallest safe fallback instead:
+         - Wrap the risky statement in the IF/EVALUATE guard the rule
+           requires, with the unsafe branch simply skipping the operation
+           (no ELSE, or an ELSE that only sets an existing flag/field to a
+           safe value such as ZERO or SPACES if that pattern is already
+           used elsewhere in the same program).
+         - Do not add STOP RUN, GOBACK, or any new control-flow transfer
+           unless that exact construct already appears elsewhere in the
+           program for a similar condition.
+    Adding a whole new named paragraph is a structural change and is
+    OUT OF SCOPE for a fix — flag it in your notes as "needs new error
+    paragraph: <rule id>" instead of writing the paragraph yourself.
+
+  0.3 Smallest possible change wins
+  ----------------------------------------------
+  Apply only the minimum required to satisfy the specific rule that fired.
+  Do not add INITIALIZE statements, do not restructure WORKING-STORAGE or
+  PROCEDURE DIVISION, do not add clauses (SYNC, VALUE, ON SIZE ERROR, etc.)
+  to fields/statements other than the ones the rule identifies, even if the
+  GOOD example shows a fuller rewrite. If a GOOD example fixes three things
+  at once and your target violation is only one of them, fix only that one.
+
+  0.4a If a rule has no defined fix below, flag it — do not improvise one
+  ----------------------------------------------
+  Every rule in this document that can be fixed has an explicit "REQUIRED
+  FIX" or GOOD example showing exactly what to insert. Apply that fix and
+  nothing more inventive. In the rare case you find a genuine violation
+  whose rule text has no defined fix for the specific situation in front of
+  you, do not improvise a structural change. Instead insert a single COBOL
+  comment line (an asterisk in column 7) immediately above the offending
+  line, in this exact format, and make no other change to the surrounding
+  code:
+      *NEEDS-REVIEW: <rule-id> - <one short phrase describing the issue>
+  This is the only case where you may add a line that isn't a direct
+  corrective fix.
+
+  0.4 Everything not explicitly required by the rule is off-limits
+  ----------------------------------------------
+  Do not touch FD entries, SELECT/ASSIGN clauses, IDENTIFICATION DIVISION,
+  variable declarations, or any line that is not itself the violation,
+  UNLESS the rule you are fixing has a "REQUIRED FIX" that names that
+  construct. Several rules (e.g. FSE-001) have a REQUIRED FIX with multiple
+  parts across different divisions — for example, adding a clause to a
+  SELECT statement AND declaring a new WORKING-STORAGE field to support it.
+  Apply every part of that rule's REQUIRED FIX together; do not apply only
+  the part in the division you noticed first and treat the rest as
+  off-limits. "Off-limits" means unrelated to any rule, not "outside the
+  division where you first spotted the violation."
+
+================================================================================
+1. SOC-7 — DATA EXCEPTION
+================================================================================
+  1.1 Rules
+  ----------
+  SOC7-001 | HIGH   | Uninitialized Numeric Field Used in Arithmetic or Comparison
+    - Every numeric field (PIC 9, PIC S9, COMP-3, COMP) must have a VALUE ZERO
+      clause OR be set by a MOVE / INITIALIZE before its first use in ADD,
+      SUBTRACT, MULTIPLY, DIVIDE, COMPUTE, IF, or EVALUATE.
+    - Flag any numeric field used in arithmetic or comparison with no prior
+      initialization.
+    - EXCEPTION: a field that is itself a REDEFINES entry can never carry
+      its own VALUE clause (COBOL does not permit this). For a numeric
+      field that redefines something else, the fix is always INITIALIZE or
+      MOVE ZERO inserted as executable code before first use — never a
+      VALUE clause on the redefining entry. See SOC7-009 for the specific
+      case where the base field's own VALUE is also invalid for numeric use.
+
+  SOC7-002 | HIGH   | COMP-3 or Numeric Field Populated from Alphanumeric Without Validation
+    - Flag every MOVE PIC-X-field TO COMP-3-field or MOVE PIC-X-field TO
+      PIC-9-field where the source is not a numeric literal.
+    - An IF [field] IS NUMERIC test must immediately precede the MOVE.
+    - Flag data from files, CICS COMMAREA, DB2, or ACCEPT going into numeric
+      fields without an IS NUMERIC check.
+
+  SOC7-003 | HIGH   | REDEFINES of Alphanumeric Field Used as Numeric Without Validation
+    - Find all REDEFINES where the redefining field is numeric (PIC 9, COMP-3)
+      and the base field is alphanumeric (PIC X or group item).
+    - Flag any arithmetic or comparison using the numeric redefining field
+      without a prior IS NUMERIC check on the base field.
+    - IMPORTANT: this rule applies REGARDLESS of how the base field's content
+      is set. Do not assume the base field must be populated by READ, MOVE,
+      CICS, or DB2 to qualify. A base field populated ONLY by a WORKING-STORAGE
+      VALUE clause (a hardcoded literal) and never reassigned is STILL a
+      violation if that literal is not itself validated/guaranteed-numeric —
+      see SOC7-009, which is the guaranteed-abend special case of this rule.
+    - Do not skip a REDEFINES simply because the base field "looks like a
+      constant." A constant with the wrong content is exactly as dangerous
+      as unvalidated runtime input — check the literal's actual content.
+
+  SOC7-009 | HIGH   | Numeric Field Redefines an Alphanumeric Field Initialized With a Non-Numeric VALUE Literal
+    - Find all REDEFINES where the redefining field is numeric (PIC 9, COMP-3,
+      COMP) and the base field is alphanumeric (PIC X) with a WORKING-STORAGE
+      VALUE clause.
+    - Inspect the literal in the VALUE clause. If it contains any character
+      that is not a digit (0-9) — including letters, punctuation, or spaces —
+      the redefining numeric field's bytes are NOT valid packed decimal /
+      binary data. This is not a "risk," it is a GUARANTEED S0C7 abend the
+      first time the redefining field is used in arithmetic or a comparison,
+      on every single execution, with no dependency on input data.
+    - REQUIRED FIX: COBOL does not permit a VALUE clause on a REDEFINES
+      entry, so the field cannot be given a safe default at declaration
+      time. Instead, insert INITIALIZE <redefining-field-name>. as a new
+      line immediately before the first statement that uses the redefining
+      field in arithmetic or comparison. This is executable code, is valid
+      regardless of the base field's declared VALUE, and eliminates the
+      abend risk with the smallest possible change — no guard clause and no
+      new error paragraph are needed for this rule, since the field is
+      always safe immediately after INITIALIZE runs.
+    - Do NOT change the base field's VALUE clause and do NOT remove the
+      REDEFINES — both may be intentional for reasons outside this
+      program's visible scope. Add only the single INITIALIZE line
+      described above, placed directly before the risky statement.
+    - SAFETY CHECK BEFORE APPLYING THIS FIX: INITIALIZE overwrites the
+      shared physical storage, which erases the base field's original
+      content too (they occupy the same bytes). Search the ENTIRE program
+      for any other reference to the base field's name (e.g. WS-VAR-DATA)
+      outside of its own declaration line and the REDEFINES line itself.
+      - If the base field name does not appear anywhere else in the
+        program, apply the INITIALIZE fix as described above.
+      - If the base field name DOES appear elsewhere (any MOVE, IF,
+        PERFORM ... VARYING, string operation, or other reference to it),
+        do NOT apply INITIALIZE automatically — this means the alphanumeric
+        content may be read for a real purpose elsewhere, and zeroing it
+        could silently destroy that data. Instead insert a
+        *NEEDS-REVIEW: SOC7-009 comment (see section 0.4a) explaining that
+        the base field is used elsewhere and the fix needs a human decision.
+
+  SOC7-004 | HIGH   | Group-Level MOVE Populating a Structure Containing Numeric Fields
+    - Find all MOVE statements where the target is a group item that contains
+      COMP-3, COMP, or PIC 9 elementary fields.
+    - Flag these unless source and target have an identical, controlled layout.
+    - Flag MOVE CORRESPONDING between groups with numeric fields when source
+      fields may not be initialized.
+
+  SOC7-005 | HIGH   | File Record Layout Mismatch with FD Definition
+    - Compare the total byte length of all fields in the FD layout against the
+      actual file LRECL from JCL.
+    - Flag FD layouts where numeric or COMP-3 fields appear in the last 20% of
+      the record — highest risk area for mismatch-caused garbage data.
+    - Flag programs reading multiple record types through one FD without using
+      record-type indicators before accessing numeric fields.
+
+  SOC7-006 | HIGH   | DB2 NULL Indicator Not Checked Before Using Host Variable
+    - Find all EXEC SQL FETCH and SELECT INTO statements.
+    - For each numeric host variable, verify its indicator variable is checked
+      NOT = -1 before the host variable is used in arithmetic or comparison.
+    - Flag numeric columns from nullable DB2 tables with no indicator variable.
+
+  SOC7-007 | MEDIUM | UNSTRING or STRING Result Placed into a Numeric Field
+    - Scan all UNSTRING ... INTO and STRING ... INTO statements.
+    - Flag any target field that is PIC 9 or COMP-3.
+    - Results must go into a PIC X field first, pass IS NUMERIC, then be moved
+      to the numeric field.
+
+  SOC7-008 | MEDIUM | Signed vs Unsigned Numeric Field Mismatch
+    - Flag all MOVE statements between signed (PIC S9) and unsigned (PIC 9)
+      numeric fields, especially where COMP-3 is involved.
+    - Flag arithmetic results that could be negative being moved into an
+      unsigned PIC 9 field.
+    - All COMP-3 fields that may hold negative values must be declared PIC S9.
+
+  1.2 Examples
+  -------------
+  SOC7-001 — Uninitialized Numeric Field
+
+    BAD:
+      WORKING-STORAGE SECTION.
+      05  WS-TOTAL   PIC 9(7)V99 COMP-3.        <- No VALUE clause
+      05  WS-COUNT   PIC 9(4)    COMP-3.        <- No VALUE clause
+
+      PROCEDURE DIVISION.
+          ADD WS-AMOUNT TO WS-TOTAL.            <- SOC-7 RISK
+          COMPUTE WS-AVG = WS-TOTAL / WS-COUNT. <- SOC-7 RISK
+
+    GOOD:
+      WORKING-STORAGE SECTION.
+      05  WS-TOTAL   PIC 9(7)V99 COMP-3 VALUE ZERO.
+      05  WS-COUNT   PIC 9(4)    COMP-3 VALUE ZERO.
+
+      PROCEDURE DIVISION.
+          INITIALIZE WS-TOTAL WS-COUNT.
+          ADD WS-AMOUNT TO WS-TOTAL.            <- SAFE
+          IF WS-COUNT > ZERO
+              COMPUTE WS-AVG = WS-TOTAL / WS-COUNT
+          END-IF.
+
+  SOC7-002 — Alphanumeric to Numeric Without Validation
+
+    BAD:
+      05  WS-INPUT   PIC X(7).
+      05  WS-AMOUNT  PIC 9(5)V99 COMP-3.
+
+          READ INPUT-FILE INTO WS-INPUT.
+          MOVE WS-INPUT TO WS-AMOUNT.           <- SOC-7 RISK: No IS NUMERIC check
+          ADD  WS-AMOUNT TO WS-TOTAL.
+
+    GOOD:
+          READ INPUT-FILE INTO WS-INPUT.
+          IF WS-INPUT IS NUMERIC
+              MOVE WS-INPUT TO WS-AMOUNT
+              ADD  WS-AMOUNT TO WS-TOTAL
+          ELSE
+              PERFORM 9999-INVALID-DATA-ERROR
+          END-IF.
+
+  SOC7-003 — REDEFINES Overlay Without Validation
+
+    BAD:
+      05  WS-RECORD-AREA   PIC X(10).
+      05  WS-NUMERIC-VIEW  REDEFINES WS-RECORD-AREA PIC 9(7)V99 COMP-3.
+
+          READ INPUT-FILE INTO WS-RECORD-AREA.
+          ADD WS-NUMERIC-VIEW TO WS-TOTAL.      <- SOC-7 RISK: Not validated
+
+    GOOD:
+          READ INPUT-FILE INTO WS-RECORD-AREA.
+          IF WS-RECORD-AREA(1:10) IS NUMERIC
+              ADD WS-NUMERIC-VIEW TO WS-TOTAL
+          ELSE
+              PERFORM 9999-INVALID-DATA-ERROR
+          END-IF.
+
+  SOC7-009 — VALUE Literal Redefined as Numeric (Guaranteed Abend)
+
+    BAD:
+      01  WS-GRP-VAR.
+          05 WS-VAR-DATA    PIC X(4) VALUE 'KEYS'.        <- Not digits
+          05 WS-VAR-NUM REDEFINES WS-VAR-DATA PIC 9(7) COMP-3.
+          05 WS-DUMMY-TOT   PIC 9(7) COMP-3 VALUE ZERO.
+
+          COMPUTE WS-DUMMY-TOT = WS-VAR-NUM + 100.  <- SOC7-009 RISK: 'KEYS'
+                                                          is not valid packed
+                                                          decimal — this WILL
+                                                          abend with S0C7 on
+                                                          every run, no bad
+                                                          input required.
+
+    GOOD:
+      01  WS-GRP-VAR.
+          05 WS-VAR-DATA    PIC X(4) VALUE 'KEYS'.        <- unchanged
+          05 WS-VAR-NUM REDEFINES WS-VAR-DATA PIC 9(7) COMP-3.
+          05 WS-DUMMY-TOT   PIC 9(7) COMP-3 VALUE ZERO.
+
+          INITIALIZE WS-VAR-NUM.                    <- SAFE: valid packed
+                                                          decimal zero written
+                                                          at runtime; WS-VAR-
+                                                          DATA's VALUE clause
+                                                          is untouched.
+          COMPUTE WS-DUMMY-TOT = WS-VAR-NUM + 100.
+
+    Note: VALUE clauses are compile-time only and cannot be placed on a
+    REDEFINES entry, which is why this cannot be fixed by editing WS-VAR-
+    NUM's declaration. INITIALIZE is an executable statement, so it runs
+    every time this code path executes and always leaves WS-VAR-NUM holding
+    valid packed decimal zero before it's used, regardless of what
+    WS-VAR-DATA's declared VALUE is.
+
+  SOC7-004 — Group MOVE into Structure with Numeric Fields
+
+    BAD:
+      01  WS-INPUT-GROUP.
+          05  WS-IN-NAME    PIC X(20).
+          05  WS-IN-AMOUNT  PIC X(9).           <- Alphanumeric in source
+      01  WS-WORK-GROUP.
+          05  WS-WK-NAME    PIC X(20).
+          05  WS-WK-AMOUNT  PIC 9(7)V99 COMP-3. <- Packed decimal in target
+
+          MOVE WS-INPUT-GROUP TO WS-WORK-GROUP. <- SOC-7 RISK: raw byte copy
+          ADD  WS-WK-AMOUNT   TO WS-TOTAL.
+
+    GOOD:
+          MOVE WS-IN-NAME TO WS-WK-NAME.
+          IF WS-IN-AMOUNT IS NUMERIC
+              MOVE WS-IN-AMOUNT TO WS-WK-AMOUNT
+              ADD  WS-WK-AMOUNT TO WS-TOTAL
+          ELSE
+              PERFORM 9999-INVALID-DATA-ERROR
+          END-IF.
+
+  SOC7-005 — FD Layout Mismatch
+
+    BAD:
+      FD  INPUT-FILE
+          RECORDING MODE F
+          BLOCK CONTAINS 0 RECORDS.
+      01  INPUT-RECORD.
+          05  IN-CUST-ID    PIC X(8).
+          05  IN-CUST-NAME  PIC X(30).
+          05  IN-AMOUNT     PIC 9(7)V99 COMP-3. <- SOC-7 RISK if LRECL < 43
+
+    GOOD:
+      * Match FD record layout length precisely to the file LRECL in JCL.
+      * Use FILE STATUS to detect truncated or mismatched reads.
+      * Validate numeric fields from trailing record positions before arithmetic.
+
+  SOC7-006 — DB2 NULL Indicator Not Checked
+
+    BAD:
+      EXEC SQL
+          FETCH EMP-CURSOR
+          INTO :WS-SALARY :WS-SALARY-IND
+      END-EXEC.
+      ADD WS-SALARY TO WS-TOTAL-SALARY.        <- SOC-7 RISK if IND = -1
+
+    GOOD:
+      EXEC SQL
+          FETCH EMP-CURSOR
+          INTO :WS-SALARY :WS-SALARY-IND
+      END-EXEC.
+      IF WS-SALARY-IND = -1
+          MOVE ZERO TO WS-SALARY
+      END-IF.
+      ADD WS-SALARY TO WS-TOTAL-SALARY.        <- SAFE
+
+  SOC7-007 — UNSTRING into Numeric Field
+
+    BAD:
+      UNSTRING WS-INPUT-STRING DELIMITED BY ','
+          INTO WS-PART1
+               WS-AMOUNT.                      <- SOC-7 RISK if WS-AMOUNT is PIC 9
+
+    GOOD:
+      05  WS-AMOUNT-X  PIC X(9).
+      05  WS-AMOUNT    PIC 9(7)V99 COMP-3.
+
+      UNSTRING WS-INPUT-STRING DELIMITED BY ','
+          INTO WS-PART1
+               WS-AMOUNT-X.
+      IF WS-AMOUNT-X IS NUMERIC
+          MOVE WS-AMOUNT-X TO WS-AMOUNT
+      ELSE
+          PERFORM 9999-INVALID-DATA-ERROR
+      END-IF.
+
+  SOC7-008 — Signed vs Unsigned Mismatch
+
+    BAD:
+      05  WS-SIGNED-AMT    PIC S9(7)V99 COMP-3.
+      05  WS-UNSIGNED-AMT  PIC  9(7)V99 COMP-3.  <- No sign declared
+
+          MOVE WS-SIGNED-AMT TO WS-UNSIGNED-AMT. <- RISK: sign nibble corrupted
+          ADD  WS-UNSIGNED-AMT TO WS-TOTAL.       <- SOC-7 RISK
+
+    GOOD:
+      05  WS-SIGNED-AMT    PIC S9(7)V99 COMP-3.
+      05  WS-UNSIGNED-AMT  PIC S9(7)V99 COMP-3.  <- Both signed consistently
+
+          MOVE WS-SIGNED-AMT TO WS-UNSIGNED-AMT. <- SAFE
+
+
+================================================================================
+2. SOC-4 — PROTECTION EXCEPTION
+================================================================================
+  2.1 Rules
+  ----------
+  SOC4-001 | HIGH | Table Subscript Not Validated Before Use
+    - Find all OCCURS tables and note their declared maximum size.
+    - For every table access using a subscript, verify a bounds check exists
+      immediately before: subscript >= 1 AND subscript <= OCCURS-maximum.
+    - Flag any table access without this guard.
+    - Flag PERFORM VARYING loops whose UNTIL condition does not prevent the
+      index from exceeding the table maximum.
+
+  SOC4-002 | HIGH | OCCURS DEPENDING ON Object Not Range-Validated
+    - Find all OCCURS n TO m DEPENDING ON [variable] clauses.
+    - Flag any case where [variable] is not validated to be within [n, m]
+      before a table element is accessed or the loop begins.
+
+  SOC4-003 | HIGH | Pointer Field Used Without NULL Check
+    - Find all fields declared USAGE POINTER.
+    - Flag any SET ADDRESS OF [linkage-item] TO [pointer] where [pointer]
+      is not checked NOT EQUAL TO NULL immediately before the SET.
+    - Flag pointer fields with no VALUE NULL that are used before being set.
+
+  SOC4-004 | HIGH | CICS COMMAREA Accessed Without EIBCALEN Check
+    - Find all CICS programs that reference DFHCOMMAREA in the Linkage Section.
+    - Verify the program checks EIBCALEN >= expected-length before any
+      COMMAREA field is accessed.
+    - Flag programs that access DFHCOMMAREA with no EIBCALEN check, including
+      first-time invocations where EIBCALEN could be zero.
+
+  SOC4-005 | HIGH | CALL BY REFERENCE Parameter Size Mismatch
+    - Find all CALL ... USING BY REFERENCE statements.
+    - Compare the size of each passed argument against the receiving program's
+      Linkage Section field.
+    - Flag any case where the called program's field is larger than the
+      argument passed by the caller.
+
+  SOC4-006 | HIGH | Dynamic CALL with Uninitialized or Blank Program Name
+    - Find all CALL [variable] statements.
+    - Flag any where the program name variable is not checked for SPACES,
+      LOW-VALUES, or blank immediately before the CALL.
+    - Flag dynamic CALLs with no ON EXCEPTION handler.
+
+  SOC4-007 | HIGH | CICS GETMAIN Storage Accessed Without Successful RESP Check
+    - Find all EXEC CICS GETMAIN statements.
+    - Flag any where storage is accessed via pointer without first checking
+      EIBRESP (or RESP option) equals DFHRESP(NORMAL).
+    - Flag use of storage after EXEC CICS FREEMAIN (use-after-free).
+
+  SOC4-008 | HIGH | PERFORM VARYING Loop Ceiling Not Bounded to Table Size
+    - Find PERFORM VARYING loops that access table elements.
+    - Flag loops where the UNTIL ceiling variable comes from external input
+      (file, DB2, ACCEPT, COMMAREA) and is not validated against the declared
+      OCCURS maximum before the loop starts.
+
+  2.2 Examples
+  -------------
+  SOC4-001 — Subscript Not Bounds-Checked
+
+    BAD:
+      05  WS-SALES-TABLE OCCURS 12 TIMES PIC 9(7)V99 COMP-3.
+      05  WS-MONTH-IDX   PIC 9(2) COMP.
+
+          MOVE WS-INPUT-MONTH TO WS-MONTH-IDX.
+          ADD WS-SALES-TABLE(WS-MONTH-IDX) TO WS-ANNUAL. <- SOC-4 RISK
+
+    GOOD:
+          MOVE WS-INPUT-MONTH TO WS-MONTH-IDX.
+          IF WS-MONTH-IDX < 1 OR WS-MONTH-IDX > 12
+              PERFORM 9999-SUBSCRIPT-ERROR
+          ELSE
+              ADD WS-SALES-TABLE(WS-MONTH-IDX) TO WS-ANNUAL
+          END-IF.
+
+  SOC4-002 — OCCURS DEPENDING ON Not Validated
+
+    BAD:
+      05  WS-ITEM-COUNT  PIC 9(3) COMP.
+      05  WS-ITEMS OCCURS 1 TO 100 DEPENDING ON WS-ITEM-COUNT.
+          10  WS-ITEM-AMT  PIC 9(7)V99 COMP-3.
+
+          MOVE WS-INPUT-COUNT TO WS-ITEM-COUNT. <- No validation — SOC-4 RISK
+          PERFORM VARYING WS-IDX FROM 1 BY 1
+                  UNTIL WS-IDX > WS-ITEM-COUNT
+              ADD WS-ITEM-AMT(WS-IDX) TO WS-TOTAL
+          END-PERFORM.
+
+    GOOD:
+          MOVE WS-INPUT-COUNT TO WS-ITEM-COUNT.
+          IF WS-ITEM-COUNT < 1 OR WS-ITEM-COUNT > 100
+              PERFORM 9999-COUNT-ERROR
+          ELSE
+              PERFORM VARYING WS-IDX FROM 1 BY 1
+                      UNTIL WS-IDX > WS-ITEM-COUNT
+                  ADD WS-ITEM-AMT(WS-IDX) TO WS-TOTAL
+              END-PERFORM
+          END-IF.
+
+  SOC4-003 — Pointer Used Without NULL Check
+
+    BAD:
+      05  WS-PTR  USAGE POINTER.                <- Not initialized
+
+          SET ADDRESS OF LS-RECORD TO WS-PTR.  <- SOC-4 RISK: pointer is garbage
+          ADD LS-AMOUNT TO WS-TOTAL.
+
+    GOOD:
+      05  WS-PTR  USAGE POINTER VALUE NULL.
+
+          IF WS-PTR EQUAL NULL
+              PERFORM 9999-POINTER-ERROR
+          ELSE
+              SET ADDRESS OF LS-RECORD TO WS-PTR
+              ADD LS-AMOUNT TO WS-TOTAL
+          END-IF.
+
+  SOC4-004 — COMMAREA Without EIBCALEN Check
+
+    BAD:
+      LINKAGE SECTION.
+      01  DFHCOMMAREA.
+          05  CA-CUST-ID  PIC X(8).
+          05  CA-AMOUNT   PIC 9(7)V99 COMP-3.   <- Offset 8, needs 13 bytes total
+
+          MOVE CA-CUST-ID TO WS-CUST-ID.        <- SOC-4 RISK: No EIBCALEN check
+          ADD  CA-AMOUNT  TO WS-TOTAL.           <- SOC-4 RISK
+
+    GOOD:
+          IF EIBCALEN < 13
+              PERFORM 9999-COMMAREA-ERROR
+          ELSE
+              MOVE CA-CUST-ID TO WS-CUST-ID
+              ADD  CA-AMOUNT  TO WS-TOTAL
+          END-IF.
+
+  SOC4-005 — CALL BY REFERENCE Size Mismatch
+
+    BAD:
+      * Calling program
+      05  WS-SMALL-AREA  PIC X(10).
+          CALL 'SUBPROG' USING BY REFERENCE WS-SMALL-AREA.
+
+      * Called program Linkage Section
+      01  LS-BIG-AREA    PIC X(500).            <- SOC-4 RISK: 500 mapped, 10 passed
+          MOVE SPACES TO LS-BIG-AREA.
+
+    GOOD:
+      * Calling program — sizes match
+      05  WS-WORK-AREA   PIC X(500).
+          CALL 'SUBPROG' USING BY REFERENCE WS-WORK-AREA.
+
+      * Called program Linkage Section
+      01  LS-WORK-AREA   PIC X(500).            <- SAFE: sizes match
+
+  SOC4-006 — Dynamic CALL with Blank Program Name
+
+    BAD:
+      05  WS-PROG-NAME  PIC X(8).
+
+          MOVE WS-INPUT-PROG TO WS-PROG-NAME.
+          CALL WS-PROG-NAME USING WS-DATA.      <- SOC-4 RISK: Not validated
+
+    GOOD:
+          MOVE WS-INPUT-PROG TO WS-PROG-NAME.
+          IF WS-PROG-NAME = SPACES OR LOW-VALUES
+              PERFORM 9999-INVALID-PROG-NAME
+          ELSE
+              CALL WS-PROG-NAME USING WS-DATA
+                  ON EXCEPTION
+                      PERFORM 9999-CALL-FAILED
+              END-CALL
+          END-IF.
+
+  SOC4-007 — CICS GETMAIN Without RESP Check
+
+    BAD:
+          EXEC CICS GETMAIN
+              SET(WS-PTR)
+              FLENGTH(WS-STORAGE-LEN)
+          END-EXEC.
+          SET ADDRESS OF LS-DYNAMIC TO WS-PTR.  <- SOC-4 RISK: No RESP check
+          MOVE SPACES TO LS-DYNAMIC.
+
+    GOOD:
+          EXEC CICS GETMAIN
+              SET(WS-PTR)
+              FLENGTH(WS-STORAGE-LEN)
+              RESP(WS-CICS-RESP)
+          END-EXEC.
+          IF WS-CICS-RESP NOT = DFHRESP(NORMAL)
+              PERFORM 9999-GETMAIN-FAILED
+          ELSE
+              SET ADDRESS OF LS-DYNAMIC TO WS-PTR
+              MOVE SPACES TO LS-DYNAMIC
+          END-IF.
+
+  SOC4-008 — PERFORM VARYING Exceeds Table Boundary
+
+    BAD:
+      05  WS-CODE-TABLE  OCCURS 50 TIMES PIC X(5).
+      05  WS-LOOP-LIMIT  PIC 9(3) COMP.
+
+          MOVE WS-INPUT-LIMIT TO WS-LOOP-LIMIT.    <- Could be > 50
+          PERFORM VARYING WS-IDX FROM 1 BY 1
+                  UNTIL WS-IDX > WS-LOOP-LIMIT     <- SOC-4 RISK
+              MOVE WS-NEW-CODE TO WS-CODE-TABLE(WS-IDX)
+          END-PERFORM.
+
+    GOOD:
+          MOVE WS-INPUT-LIMIT TO WS-LOOP-LIMIT.
+          IF WS-LOOP-LIMIT > 50
+              MOVE 50 TO WS-LOOP-LIMIT
+          END-IF.
+          IF WS-LOOP-LIMIT < 1
+              PERFORM 9999-INVALID-LIMIT
+          ELSE
+              PERFORM VARYING WS-IDX FROM 1 BY 1
+                      UNTIL WS-IDX > WS-LOOP-LIMIT
+                  MOVE WS-NEW-CODE TO WS-CODE-TABLE(WS-IDX)
+              END-PERFORM
+          END-IF.
+
+
+================================================================================
+3. SOC-1 — OPERATION EXCEPTION
+================================================================================
+  3.1 Rules
+  ----------
+  SOC1-001 | HIGH | ALTER Verb Usage Detected
+    - Scan the entire Procedure Division for any use of the ALTER verb.
+    - Flag every occurrence unconditionally.
+    - ALTER is an obsolete feature that makes program flow unpredictable and
+      can branch into invalid addresses. Replace with EVALUATE or PERFORM.
+
+  SOC1-002 | HIGH | Dynamic CALL with No ON EXCEPTION Handler
+    - Find all CALL statements where the program name is a variable.
+    - Flag any that do not have ON EXCEPTION or ON OVERFLOW clauses.
+    - A missing handler causes an immediate abend if the target program is not
+      found or is not loadable.
+
+  3.2 Examples
+  -------------
+  SOC1-001 — ALTER Verb
+
+    BAD:
+          ALTER PARA-A TO PROCEED TO PARA-B.   <- SOC-1 RISK: ALTER is unsafe
+          GO TO PARA-A.
+
+    GOOD:
+          EVALUATE WS-ROUTING-FLAG
+              WHEN 'A'    PERFORM PARA-A
+              WHEN 'B'    PERFORM PARA-B
+              WHEN OTHER  PERFORM 9999-ROUTING-ERROR
+          END-EVALUATE.
+
+  SOC1-002 — Dynamic CALL Without ON EXCEPTION
+
+    BAD:
+          CALL WS-PROG-NAME USING WS-PARM.     <- SOC-1 RISK: No exception handler
+
+    GOOD:
+          CALL WS-PROG-NAME USING WS-PARM
+              ON EXCEPTION
+                  MOVE 'Y' TO WS-CALL-FAILED-FLAG
+                  PERFORM 9999-CALL-ERROR
+          END-CALL.
+
+
+================================================================================
+4. SOC-3 — DECIMAL DIVIDE EXCEPTION
+================================================================================
+  4.1 Rules
+  ----------
+  SOC3-001 | HIGH | Division Without Zero Check on Divisor
+    - Find all DIVIDE statements and all COMPUTE statements containing /.
+    - Flag any where the divisor variable is not checked for ZERO immediately
+      before the operation.
+    - Flag divisions inside loops where the divisor is updated in the loop body.
+    - All arithmetic must include ON SIZE ERROR as an additional safety net.
+
+  4.2 Examples
+  -------------
+  SOC3-001 — Division by Zero
+
+    BAD:
+          COMPUTE WS-AVG = WS-TOTAL / WS-COUNT. <- SOC-3 RISK: No zero check
+
+          DIVIDE WS-COUNT INTO WS-TOTAL          <- SOC-3 RISK
+              GIVING WS-AVG.
+
+    GOOD:
+          IF WS-COUNT = ZERO
+              MOVE ZERO TO WS-AVG
+              PERFORM 9999-ZERO-DIVISOR-WARNING
+          ELSE
+              COMPUTE WS-AVG = WS-TOTAL / WS-COUNT
+                  ON SIZE ERROR
+                      MOVE ZERO TO WS-AVG
+                      PERFORM 9999-ARITHMETIC-OVERFLOW
+              END-COMPUTE
+          END-IF.
+
+
+================================================================================
+5. SOC-6 — SPECIFICATION EXCEPTION
+================================================================================
+5.1 Rule
+  ----------
+  SOC6-001 | MEDIUM | COMP Field Without SYNCHRONIZED Clause
+    - Find all fields declared USAGE COMP or USAGE COMP-4.
+    - Flag any that do not have the SYNCHRONIZED (SYNC) clause.
+    - Alignment requirements:
+        PIC 9(1-4)  COMP  ->  2-byte (halfword) boundary
+        PIC 9(5-9)  COMP  ->  4-byte (fullword) boundary
+        PIC 9(10-18) COMP ->  8-byte (doubleword) boundary
+    - Pay extra attention to COMP fields that follow odd-length PIC X fields.
+
+  SOC6-002 | MEDIUM | COMP Field Redefined Over Non-Aligned PIC X Field
+    - Find all REDEFINES where the redefining field is COMP or COMP-4.
+    - Flag any where the base PIC X field does not start on the required
+      boundary for the COMP data type.
+
+  5.2 Examples
+  -------------
+  SOC6-001 — COMP Without SYNC
+
+    BAD:
+      05  WS-FLAG     PIC X(3).            <- 3 bytes — odd boundary
+      05  WS-COUNTER  PIC 9(9) COMP.       <- SOC-6 RISK: may misalign
+
+    GOOD:
+      05  WS-FLAG     PIC X(3).
+      05  WS-COUNTER  PIC 9(9) COMP SYNC.  <- SAFE: SYNC ensures alignment
+
+  SOC6-002 — COMP Redefined Over Unaligned PIC X
+
+    BAD:
+      05  WS-BYTE-AREA   PIC X(5).
+      05  WS-BINARY-NUM  REDEFINES WS-BYTE-AREA PIC 9(9) COMP. <- SOC-6 RISK
+
+
+================================================================================
+6. FILE STATUS ERRORS
+================================================================================
+  6.1 Rules
+  ----------
+  FSE-001 | HIGH | FILE STATUS Variable Not Defined for File
+    - Find all SELECT statements in the ENVIRONMENT DIVISION.
+    - Flag any SELECT statement that does not include FILE STATUS [variable].
+    - REQUIRED FIX (two parts — both are required, this rule is not complete
+      with only one):
+        1. Add "FILE STATUS IS <status-field-name>." to the SELECT
+           statement (on a new line immediately after the ASSIGN clause,
+           replacing the SELECT statement's terminating period with one
+           after the new FILE STATUS clause).
+        2. Declare <status-field-name> in WORKING-STORAGE SECTION as
+           01 <status-field-name> PIC XX. — if WORKING-STORAGE already has
+           a group of similar status/flag fields (e.g. WS-FLAGS or similar),
+           add the new 01-level entry immediately after that group; if no
+           such group exists, add it as a new 01-level entry immediately
+           before PROCEDURE DIVISION. This new field is required by this
+           rule, so adding it does not violate the "no new lines" or "don't
+           touch WORKING-STORAGE" constraints elsewhere in this document —
+           FSE-001 explicitly authorizes both edits together.
+    - NAMING: derive <status-field-name> from the file's own name, e.g. a
+      file named EMP-IN-FILE -> WS-EMP-IN-FILE-STATUS, a file named EMPIN
+      -> WS-EMPIN-STATUS. Before inventing a name, check whether the
+      program already has an existing, unused status field for this exact
+      file (from a prior partial implementation) and reuse it instead of
+      declaring a duplicate.
+    - This same status field name must be reused by FSE-002 and FSE-003
+      when adding their checks for the same file — do not declare a second
+      status field for a file that already has one from FSE-001.
+
+  FSE-002 | HIGH | File Verb Not Followed by FILE STATUS Check
+    - After every OPEN, READ, WRITE, REWRITE, DELETE, CLOSE — verify there is
+      an IF or EVALUATE checking the FILE STATUS variable.
+    - Acceptable statuses:
+        OPEN           -> '00' only
+        READ           -> '00' (success) and '10' (EOF) only
+        WRITE/REWRITE/DELETE -> '00' only
+    - Flag any file verb not immediately followed by a FILE STATUS check.
+    - THIS RULE IS INDEPENDENT OF FSE-001. If FSE-001 also fired for the
+      same file (i.e. you added a FILE STATUS field because there wasn't
+      one), that alone does NOT satisfy FSE-002 — a declared-but-never-
+      checked status field provides zero protection. Whenever you apply
+      FSE-001 to a file, immediately also apply FSE-002 to every verb used
+      against that file in the same pass. Do not stop after adding the
+      field.
+    - REQUIRED FIX — use the existing status field (from FSE-001, or the
+      one already declared if FSE-001 didn't need to fire):
+        - Search the program first for an existing error-handling paragraph
+          (an ABEND routine, error paragraph, or similar) per section 0.2.
+          If one exists, PERFORM it in the checks below instead of DISPLAY.
+        - If no such paragraph exists anywhere in the program, use this
+          self-contained fallback (valid COBOL, invents nothing new):
+            After OPEN:
+              IF <status-field> NOT = '00'
+                  DISPLAY '<FILE-NAME> OPEN FAILED - STATUS: ' <status-field>
+                  STOP RUN
+              END-IF
+            After READ (inside a loop with AT END already present — do not
+            duplicate EOF handling if AT END already sets the EOF flag;
+            only add the check for unexpected non-'00'/'10' statuses):
+              IF <status-field> NOT = '00' AND <status-field> NOT = '10'
+                  DISPLAY '<FILE-NAME> READ FAILED - STATUS: ' <status-field>
+                  STOP RUN
+              END-IF
+            After WRITE/REWRITE/DELETE:
+              IF <status-field> NOT = '00'
+                  DISPLAY '<FILE-NAME> WRITE FAILED - STATUS: ' <status-field>
+                  STOP RUN
+              END-IF
+            After CLOSE (never STOP RUN here — the program is already
+            ending; a failed CLOSE is not worth aborting for):
+              IF <status-field> NOT = '00'
+                  DISPLAY '<FILE-NAME> CLOSE FAILED - STATUS: ' <status-field>
+              END-IF
+        - DISPLAY and STOP RUN/CONTINUE are always valid COBOL requiring no
+          new paragraph, so this fallback is always safe to apply — do not
+          flag FSE-002 as NEEDS-REVIEW for lack of an error paragraph to
+          call. Only flag it if you cannot determine which status field or
+          file name to reference.
+
+  FSE-003 | HIGH | READ Loop Without End-of-File Handling
+    - Find all READ statements inside PERFORM loops.
+    - Flag any READ with no AT END clause and no FILE STATUS = '10' check.
+    - Without EOF handling the loop will not terminate or will re-process the
+      last record indefinitely.
+
+  6.2 Examples
+  -------------
+  FSE-001 — No FILE STATUS Clause
+
+    BAD:
+      FILE-CONTROL.
+          SELECT INPUT-FILE ASSIGN TO INFILE.        <- HIGH RISK: No FILE STATUS
+
+      WORKING-STORAGE SECTION.
+      01  WS-SOME-OTHER-FIELD  PIC X(10).
+
+    GOOD:
+      FILE-CONTROL.
+          SELECT INPUT-FILE ASSIGN TO INFILE
+              FILE STATUS IS WS-INPUT-FILE-STATUS.
+
+      WORKING-STORAGE SECTION.
+      01  WS-INPUT-FILE-STATUS PIC XX.                <- NEW: declared to
+                                                            support the FILE
+                                                            STATUS clause
+                                                            above; both edits
+                                                            are required
+                                                            together.
+      01  WS-SOME-OTHER-FIELD  PIC X(10).
+
+  FSE-002 — File Verb Without Status Check
+
+    BAD:
+          OPEN INPUT INPUT-FILE.                     <- No status check
+          READ INPUT-FILE INTO WS-RECORD              <- No status check
+              AT END MOVE 'Y' TO WS-EOF-FLAG
+          END-READ.
+
+    GOOD (no existing error paragraph found in program — use fallback):
+          OPEN INPUT INPUT-FILE.
+          IF WS-INPUT-FILE-STATUS NOT = '00'
+              DISPLAY 'INPUT-FILE OPEN FAILED - STATUS: ' WS-INPUT-FILE-STATUS
+              STOP RUN
+          END-IF.
+
+          READ INPUT-FILE INTO WS-RECORD
+              AT END MOVE 'Y' TO WS-EOF-FLAG
+          END-READ.
+          IF WS-INPUT-FILE-STATUS NOT = '00' AND WS-INPUT-FILE-STATUS NOT = '10'
+              DISPLAY 'INPUT-FILE READ FAILED - STATUS: ' WS-INPUT-FILE-STATUS
+              STOP RUN
+          END-IF.
+
+    Note: the existing AT END clause is left untouched — it already handles
+    the '10' EOF case correctly via WS-EOF-FLAG. The new IF only catches
+    statuses that are neither '00' nor '10' (genuine errors), so it does
+    not duplicate or conflict with the AT END logic already in the program.
+
+  FSE-003 — READ Loop Without EOF Handling
+
+    BAD:
+          PERFORM UNTIL WS-DONE = 'Y'
+              READ INPUT-FILE INTO WS-RECORD    <- No AT END, no status check
+              PERFORM 1000-PROCESS
+          END-PERFORM.
+
+    GOOD:
+          PERFORM UNTIL WS-EOF = 'Y'
+              READ INPUT-FILE INTO WS-RECORD
+                  AT END MOVE 'Y' TO WS-EOF
+              END-READ
+              IF WS-INPUT-FILE-STATUS NOT = '00'
+                 AND WS-INPUT-FILE-STATUS NOT = '10'
+                  PERFORM 9999-READ-ERROR
+                  MOVE 'Y' TO WS-EOF
+              END-IF
+              IF WS-EOF = 'N'
+                  PERFORM 1000-PROCESS
+              END-IF
+          END-PERFORM.
+
+
+================================================================================
+7. NUMERIC OVERFLOW
+================================================================================
+  7.1 Rules
+  ----------
+  OVF-001 | MEDIUM | Arithmetic Statement Without ON SIZE ERROR
+    - Find all ADD, SUBTRACT, MULTIPLY, DIVIDE, COMPUTE statements.
+    - Flag any that do not have an ON SIZE ERROR clause.
+    - Pay special attention to MULTIPLY and COMPUTE with * where the result
+      field may be too small for the maximum possible product.
+
+  OVF-002 | MEDIUM | MOVE of Larger Numeric Field to Smaller Numeric Field
+    - Find all MOVE statements from one numeric field to another.
+    - Compare the integer digit positions of source and target.
+    - Flag any MOVE where the target has fewer integer digits than the source.
+
+  7.2 Examples
+  -------------
+  OVF-001 — No ON SIZE ERROR
+
+    BAD:
+      05  WS-QTY    PIC 9(5)    COMP-3.
+      05  WS-PRICE  PIC 9(5)V99 COMP-3.
+      05  WS-VALUE  PIC 9(7)V99 COMP-3.   <- Max 9,999,999.99
+                                           <- but 99999 * 99999.99 ~ 9.9 billion!
+          COMPUTE WS-VALUE = WS-QTY * WS-PRICE. <- RISK: silent truncation
+
+    GOOD:
+      05  WS-VALUE  PIC 9(12)V99 COMP-3.  <- Sized for worst case
+          COMPUTE WS-VALUE = WS-QTY * WS-PRICE
+              ON SIZE ERROR
+                  PERFORM 9999-OVERFLOW-ERROR
+          END-COMPUTE.
+
+  OVF-002 — MOVE to Smaller Numeric Field
+
+    BAD:
+      05  WS-LARGE-AMT  PIC 9(12)V99 COMP-3.
+      05  WS-SMALL-AMT  PIC 9(5)V99  COMP-3.
+
+          MOVE WS-LARGE-AMT TO WS-SMALL-AMT.   <- RISK: 7 high-order digits lost
+
+
+================================================================================
+8. DB2 — SQLCODE NOT CHECKED
+================================================================================
+  8.1 Rules
+  ----------
+  DB2-001 | HIGH | SQLCODE Not Checked After Every SQL Statement
+    - Find all EXEC SQL ... END-EXEC blocks.
+    - Verify each is immediately followed by an EVALUATE SQLCODE or IF SQLCODE.
+    - SQLCODE values to handle:
+        0     -> Success
+        +100  -> NOT FOUND / end of cursor
+        Negative -> Error; must branch to an error routine
+    - Flag FETCH statements in a loop with no check for SQLCODE = +100.
+    - Flag any SQL block with no SQLCODE check at all.
+
+  8.2 Examples
+  -------------
+  DB2-001 — SQLCODE Not Checked
+
+    BAD:
+          EXEC SQL
+              SELECT SALARY INTO :WS-SALARY
+              FROM EMPLOYEE
+              WHERE EMP-ID = :WS-EMP-ID
+          END-EXEC.
+          ADD WS-SALARY TO WS-TOTAL.           <- RISK: No SQLCODE check
+
+    GOOD:
+          EXEC SQL
+              SELECT SALARY INTO :WS-SALARY :WS-SALARY-IND
+              FROM EMPLOYEE
+              WHERE EMP-ID = :WS-EMP-ID
+          END-EXEC.
+          EVALUATE TRUE
+              WHEN SQLCODE = 0
+                  IF WS-SALARY-IND = -1
+                      MOVE ZERO TO WS-SALARY
+                  END-IF
+                  ADD WS-SALARY TO WS-TOTAL
+              WHEN SQLCODE = +100
+                  PERFORM 9000-EMPLOYEE-NOT-FOUND
+              WHEN OTHER
+                  PERFORM 9999-SQL-ERROR
+          END-EVALUATE.
+
+
+================================================================================
+9. CICS — RESP NOT CHECKED
+================================================================================
+  9.1 Rules
+  ----------
+  CICS-001 | HIGH | CICS Command Without RESP Check
+    - Find all EXEC CICS ... END-EXEC blocks.
+    - Verify each uses RESP(WS-variable) or checks EIBRESP immediately after.
+    - Flag any CICS command with no RESP check.
+    - Flag use of EXEC CICS HANDLE CONDITION — this is obsolete; replace with
+      inline RESP checking.
+    - Commands requiring mandatory RESP checks:
+        READ, WRITE, REWRITE, DELETE, GETMAIN, FREEMAIN,
+        LINK, XCTL, RETURN, SEND, RECEIVE, ENQUEUE, DEQUEUE.
+
+  9.2 Examples
+  -------------
+  CICS-001 — No RESP Check
+
+    BAD:
+          EXEC CICS READ
+              FILE('CUSTFILE')
+              INTO(WS-CUST-RECORD)
+              RIDFLD(WS-CUST-ID)
+              LENGTH(WS-REC-LEN)
+          END-EXEC.
+          MOVE WS-CUST-NAME TO WS-OUTPUT-NAME. <- RISK: No RESP check
+
+    GOOD:
+          EXEC CICS READ
+              FILE('CUSTFILE')
+              INTO(WS-CUST-RECORD)
+              RIDFLD(WS-CUST-ID)
+              LENGTH(WS-REC-LEN)
+              RESP(WS-CICS-RESP)
+          END-EXEC.
+          EVALUATE WS-CICS-RESP
+              WHEN DFHRESP(NORMAL)
+                  MOVE WS-CUST-NAME TO WS-OUTPUT-NAME
+              WHEN DFHRESP(NOTFND)
+                  PERFORM 9000-CUSTOMER-NOT-FOUND
+              WHEN OTHER
+                  PERFORM 9999-CICS-ERROR
+          END-EVALUATE.
+
+
+================================================================================
+10. INFINITE LOOP
+================================================================================
+  10.1 Rules
+  -----------
+  LOOP-001 | HIGH | PERFORM UNTIL Loop Exit Condition Never Modified Inside Loop
+    - Find all PERFORM UNTIL statements.
+    - Identify the variable(s) in the UNTIL condition.
+    - Flag any loop where none of those variables is modified inside the loop body.
+    - Flag READ loops where AT END or FILE STATUS = '10' that sets the EOF flag
+      is absent or can be bypassed.
+
+  LOOP-002 | HIGH | Loop Counter Not Bounded to a Known Maximum
+    - Find PERFORM VARYING loops where the UNTIL ceiling is a variable.
+    - Flag any loop where that ceiling variable comes from external input
+      (file, DB2, ACCEPT, COMMAREA) and is not validated against a known
+      maximum before the loop begins.
+
+  10.2 Examples
+  --------------
+  LOOP-001 — Exit Condition Never Set
+
+    BAD:
+      05  WS-EOF  PIC X VALUE 'N'.
+
+          PERFORM UNTIL WS-EOF = 'Y'            <- WS-EOF never set to 'Y'
+              READ INPUT-FILE INTO WS-RECORD    <- No AT END clause
+              PERFORM 1000-PROCESS
+          END-PERFORM.
+
+    GOOD:
+          PERFORM UNTIL WS-EOF = 'Y'
+              READ INPUT-FILE INTO WS-RECORD
+                  AT END MOVE 'Y' TO WS-EOF     <- Exit condition is set
+              END-READ
+              IF WS-EOF = 'N'
+                  PERFORM 1000-PROCESS
+              END-IF
+          END-PERFORM.
+
+  LOOP-002 — Loop Counter Not Bounded
+
+    BAD:
+      05  WS-RECORD-COUNT  PIC 9(5) COMP-3.     <- Comes from file header
+      05  WS-DATA-TABLE    OCCURS 1000 TIMES.
+
+          READ HEADER-FILE INTO WS-HEADER.
+          MOVE WS-HDR-COUNT TO WS-RECORD-COUNT. <- Could be > 1000!
+          PERFORM VARYING WS-IDX FROM 1 BY 1
+                  UNTIL WS-IDX > WS-RECORD-COUNT <- SOC-4 RISK if > 1000
+              READ DATA-FILE INTO WS-DATA-TABLE(WS-IDX)
+          END-PERFORM.
+
+    GOOD:
+          MOVE WS-HDR-COUNT TO WS-RECORD-COUNT.
+          IF WS-RECORD-COUNT < 1 OR WS-RECORD-COUNT > 1000
+              PERFORM 9999-INVALID-RECORD-COUNT
+              STOP RUN
+          END-IF.
+          PERFORM VARYING WS-IDX FROM 1 BY 1
+                  UNTIL WS-IDX > WS-RECORD-COUNT
+              READ DATA-FILE INTO WS-DATA-TABLE(WS-IDX)
+                  AT END PERFORM 9999-UNEXPECTED-EOF
+              END-READ
+          END-PERFORM.
+
+
+================================================================================
+END OF RULES FILE
+================================================================================
