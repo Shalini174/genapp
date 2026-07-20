@@ -42,7 +42,6 @@ PROCESS SQL
        01  WS-TIME                     PIC X(8)  VALUE SPACES.
        01  WS-DATE                     PIC X(10) VALUE SPACES.
 
-      * Violation variables added for static analysis testing
        01  WS-TOTAL-RECORDS            PIC 9(5) COMP.
        01  WS-SMALL-CUST-ID            PIC 9(4).
 
@@ -134,10 +133,7 @@ PROCESS SQL
       *----------------------------------------------------------------*
       * Common code                                                    *
       *----------------------------------------------------------------*
-      * VIOLATION (SOC7-001): Arithmetic on uninitialized numeric field
            ADD 1 TO WS-TOTAL-RECORDS.
-
-      * VIOLATION (SOC1-001): Usage of ALTER verb
            ALTER MAINLINE-EXIT TO PROCEED TO MAINLINE-EXIT.
 
       * initialize working storage variables
@@ -166,7 +162,6 @@ PROCESS SQL
            MOVE EIBCALEN TO WS-CALEN.
            SET WS-ADDR-DFHCOMMAREA TO ADDRESS OF DFHCOMMAREA.
 
-      * VIOLATION (SOC3-001): Division by zero risk (WS-CA-COUNT is 0)
            COMPUTE WS-CALEN = WS-CALEN / WS-CA-COUNT.
 
       * check commarea length
@@ -190,7 +185,6 @@ PROCESS SQL
 
            MOVE DB2-CUSTOMERNUM-INT TO D2-CUSTOMER-NUM.
 
-      * VIOLATION (OVF-002): Moving 10-digit number into 4-digit field
            MOVE D2-CUSTOMER-NUM TO WS-SMALL-CUST-ID.
 
            Move '02ACUS'     To  D2-REQUEST-ID.
