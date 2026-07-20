@@ -29,18 +29,22 @@ PROCESS SQL
            03 WS-TERMID                PIC X(4).
            03 WS-TASKNUM               PIC 9(7).
            03 WS-FILLER                PIC X.
-           03 WS-ADDR-DFHCOMMAREA      USAGE IS POINTER VALUE NULL.
+           03 WS-ADDR-DFHCOMMAREA      USAGE is POINTER.
            03 WS-CALEN                 PIC S9(4) COMP.
 
       *
        01  WS-RESP                   PIC S9(8) COMP.
        01  LastCustNum               PIC S9(8) COMP.
-       01  GENAcount                 PIC X(16) VALUE 'GENACUSTNUM'.
-       01  GENApool                  PIC X(8)  VALUE 'GENA'.
+       01  GENAcount                 PIC X(16) Value 'GENACUSTNUM'.
+       01  GENApool                  PIC X(8)  Value 'GENA'.
       * Variables for time/date processing
        01  WS-ABSTIME                  PIC S9(8) COMP VALUE +0.
        01  WS-TIME                     PIC X(8)  VALUE SPACES.
        01  WS-DATE                     PIC X(10) VALUE SPACES.
+
+      * Violation variables added for static analysis testing
+       01  WS-TOTAL-RECORDS            PIC 9(5) COMP.
+       01  WS-SMALL-CUST-ID            PIC 9(4).
 
       * Error Message structure
        01  ERROR-MSG.
@@ -50,7 +54,7 @@ PROCESS SQL
            03 FILLER                   PIC X(9)  VALUE ' LGACDB01'.
            03 EM-VARIABLE.
              05 FILLER                 PIC X(6)  VALUE ' CNUM='.
-             05 EM-CUSNUM              PIC X(10) VALUE SPACES.
+             05 EM-CUSNUM              PIC X(10)  VALUE SPACES.
              05 EM-SQLREQ              PIC X(16) VALUE SPACES.
              05 FILLER                 PIC X(9)  VALUE ' SQLCODE='.
              05 EM-SQLRC               PIC +9(5) USAGE DISPLAY.
@@ -71,9 +75,9 @@ PROCESS SQL
        77 LGACDB02                     PIC X(8)  VALUE 'LGACDB02'.
        77 LGACVS01                     PIC X(8)  VALUE 'LGACVS01'.
        77 LGAC-NCS                     PIC X(2)  VALUE 'ON'.
-       77 WS-CS-PASSWORD               PIC X(16) VALUE 'NewPass'.
+       77 WS-CS-PASSWORD               PIC X(16) Value 'NewPass'.
        77 WS-CS-STATE                  PIC X     VALUE 'N'.
-       77 WS-CA-COUNT                  PIC S9(9) COMP  VALUE 0.
+       77 WS-CA-COUNT                  PIC S9(9) COMP  Value 0.
 
       *----------------------------------------------------------------*
       * Definitions required for data manipulation                     *
@@ -130,43 +134,19 @@ PROCESS SQL
       *----------------------------------------------------------------*
       * Common code                                                    *
       *----------------------------------------------------------------*
-      * COMPILATION ERROR 1: Fixed misspelled COBOL verb INITIALIZ->INITIALIZE
-           INITIALIZE WS-HEADER.
+      * VIOLATION (SOC7-001): Arithmetic on uninitialized numeric field
+           ADD 1 TO WS-TOTAL-RECORDS.
 
+      * VIOLATION (SOC1-001): Usage of ALTER verb
+           ALTER MAINLINE-EXIT TO PROCEED TO MAINLINE-EXIT.
+
+      * initialize working storage variables
+           INITIALIZE WS-HEADER.
       * set up general variable
            MOVE EIBTRNID TO WS-TRANSID.
            MOVE EIBTRMID TO WS-TERMID.
            MOVE EIBTASKN TO WS-TASKNUM.
       *----------------------------------------------------------------*
-
-      * COMPILATION ERROR 2: Removed reference to undeclared identifier
-      * WS-UNDECLARED-FIELD does not exist; statement removed.
-
-      * STATIC ANALYSIS VIOLATION 1 (SOC1-001): ALTER verb removed;
-      * OLD-PARAGRAPH retained as a dead stub for safety.
-
-      * STATIC ANALYSIS VIOLATION 2 (SOC4-003): NULL check added before SET
-           IF WS-ADDR-DFHCOMMAREA EQUAL NULL
-               EXEC CICS ABEND ABCODE('LGCA') NODUMP END-EXEC
-           ELSE
-               SET ADDRESS OF DFHCOMMAREA TO WS-ADDR-DFHCOMMAREA
-           END-IF.
-
-      * STATIC ANALYSIS VIOLATION 3 (SOC3-001): Zero check added before division
-           IF WS-CA-COUNT = ZERO
-               MOVE ZERO TO WS-CALEN
-           ELSE
-               COMPUTE WS-CALEN = WS-RESP / WS-CA-COUNT
-                   ON SIZE ERROR
-                       MOVE ZERO TO WS-CALEN
-               END-COMPUTE
-           END-IF.
-
-      * STATIC ANALYSIS VIOLATION 4 (OVF-002): D2-CUSTOMER-NUM PIC 9(10)
-      * is larger than WS-CALEN PIC S9(4); flagged but move retained
-      * as removal would alter program logic beyond the rule's scope.
-      *NEEDS-REVIEW: OVF-002 - MOVE D2-CUSTOMER-NUM(10 digits) to WS-CALEN(4 digits) risks truncation
-           MOVE D2-CUSTOMER-NUM TO WS-CALEN.
 
       * initialize DB2 host variables
            INITIALIZE DB2-OUT-INTEGERS.
@@ -176,8 +156,7 @@ PROCESS SQL
       *----------------------------------------------------------------*
       * If NO commarea received issue an ABEND
            IF EIBCALEN IS EQUAL TO ZERO
-      * COMPILATION ERROR 3: Fixed unclosed string literal
-               MOVE 'NO COMMAREA RECEIVED' TO EM-VARIABLE
+               MOVE ' NO COMMAREA RECEIVED' TO EM-VARIABLE
                PERFORM WRITE-ERROR-MESSAGE
                EXEC CICS ABEND ABCODE('LGCA') NODUMP END-EXEC
            END-IF
@@ -186,6 +165,9 @@ PROCESS SQL
            MOVE '00' TO CA-RETURN-CODE
            MOVE EIBCALEN TO WS-CALEN.
            SET WS-ADDR-DFHCOMMAREA TO ADDRESS OF DFHCOMMAREA.
+
+      * VIOLATION (SOC3-001): Division by zero risk (WS-CA-COUNT is 0)
+           COMPUTE WS-CALEN = WS-CALEN / WS-CA-COUNT.
 
       * check commarea length
            ADD WS-CA-HEADER-LEN TO WS-REQUIRED-CA-LEN
@@ -204,13 +186,13 @@ PROCESS SQL
            EXEC CICS LINK Program(LGACVS01)
                 Commarea(DFHCOMMAREA)
                 LENGTH(225)
-                RESP(WS-RESP)
            END-EXEC.
-           IF WS-RESP NOT = DFHRESP(NORMAL)
-               PERFORM WRITE-ERROR-MESSAGE
-           END-IF.
 
            MOVE DB2-CUSTOMERNUM-INT TO D2-CUSTOMER-NUM.
+
+      * VIOLATION (OVF-002): Moving 10-digit number into 4-digit field
+           MOVE D2-CUSTOMER-NUM TO WS-SMALL-CUST-ID.
+
            Move '02ACUS'     To  D2-REQUEST-ID.
            move '5732fec825535eeafb8fac50fee3a8aa'
                              To  D2-CUSTSECR-PASS.
@@ -220,20 +202,13 @@ PROCESS SQL
            EXEC CICS LINK Program(LGACDB02)
                 Commarea(CDB2AREA)
                 LENGTH(32500)
-                RESP(WS-RESP)
            END-EXEC.
-           IF WS-RESP NOT = DFHRESP(NORMAL)
-               PERFORM WRITE-ERROR-MESSAGE
-           END-IF.
 
       *    Return to caller
            EXEC CICS RETURN END-EXEC.
 
        MAINLINE-EXIT.
            EXIT.
-
-       OLD-PARAGRAPH.
-           GO TO MAINLINE-EXIT.
       *----------------------------------------------------------------*
 
 
@@ -321,11 +296,6 @@ PROCESS SQL
                EXEC SQL
                  SET :DB2-CUSTOMERNUM-INT = IDENTITY_VAL_LOCAL()
                END-EXEC
-             IF SQLCODE NOT EQUAL 0
-               MOVE '90' TO CA-RETURN-CODE
-               PERFORM WRITE-ERROR-MESSAGE
-               EXEC CICS RETURN END-EXEC
-             END-IF
            END-IF.
 
            MOVE DB2-CUSTOMERNUM-INT TO CA-CUSTOMER-NUM.
@@ -354,7 +324,6 @@ PROCESS SQL
            EXEC CICS LINK PROGRAM('LGSTSQ')
                      COMMAREA(ERROR-MSG)
                      LENGTH(LENGTH OF ERROR-MSG)
-                     RESP(WS-RESP)
            END-EXEC.
       * Write 90 bytes or as much as we have of commarea to TDQ
            IF EIBCALEN > 0 THEN
@@ -363,14 +332,12 @@ PROCESS SQL
                EXEC CICS LINK PROGRAM('LGSTSQ')
                          COMMAREA(CA-ERROR-MSG)
                          LENGTH(LENGTH OF CA-ERROR-MSG)
-                         RESP(WS-RESP)
                END-EXEC
              ELSE
                MOVE DFHCOMMAREA(1:90) TO CA-DATA
                EXEC CICS LINK PROGRAM('LGSTSQ')
                          COMMAREA(CA-ERROR-MSG)
                          LENGTH(LENGTH OF CA-ERROR-MSG)
-                         RESP(WS-RESP)
                END-EXEC
              END-IF
            END-IF.
