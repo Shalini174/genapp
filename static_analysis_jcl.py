@@ -119,10 +119,10 @@ async def run_mcp_pipeline_poc(session, original_code: str, modified_code: str):
         print("[INFO] Code changes detected! Creating branch and Pull Request...")
         pr_url = await code_commit(session, final_code)
         print(f"[ACTION REQUIRED] Pull Request opened: {pr_url}")
-        sys.exit(10)  # Return Code 10 -> PR Created
+        return 10  # Return Code 10 -> PR Created
     else:
         print("[INFO] Code adheres to rules. No changes required.")
-        sys.exit(0)   # Return Code 0 -> Success / No PR Needed
+        return 0   # Return Code 0 -> Success / No PR Needed
 
 async def static_analysis_check(session) -> tuple[str, str]:
     file_path = f"src/{program_name}"
@@ -158,7 +158,7 @@ async def github_connection():
         async with ClientSession(read, write) as session:
             await session.initialize()
             original_code, modified_code = await static_analysis_check(session)
-            await run_mcp_pipeline_poc(session, original_code, modified_code)
+            return await run_mcp_pipeline_poc(session, original_code, modified_code)
 
 async def code_commit(session, modified_file) -> str:
     timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
@@ -183,4 +183,5 @@ async def code_commit(session, modified_file) -> str:
     return pr_url
 
 if __name__ == "__main__":
-    asyncio.run(github_connection())
+    exit_code = asyncio.run(github_connection())
+    sys.exit(exit_code)
