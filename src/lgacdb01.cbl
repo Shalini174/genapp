@@ -1,4 +1,4 @@
-       PROCESS SQL
+PROCESS SQL
       ******************************************************************
       *                                                                *
       * (C) Copyright IBM Corp. 2011, 2021                             *
@@ -29,14 +29,14 @@
            03 WS-TERMID                PIC X(4).
            03 WS-TASKNUM               PIC 9(7).
            03 WS-FILLER                PIC X.
-           03 WS-ADDR-DFHCOMMAREA      USAGE is POINTER.
+           03 WS-ADDR-DFHCOMMAREA      USAGE IS POINTER.
            03 WS-CALEN                 PIC S9(4) COMP.
 
       *
        01  WS-RESP                   PIC S9(8) COMP.
        01  LastCustNum               PIC S9(8) COMP.
-       01  GENAcount                 PIC X(16) Value 'GENACUSTNUM'.
-       01  GENApool                  PIC X(8)  Value 'GENA'.
+       01  GENAcount                 PIC X(16) VALUE 'GENACUSTNUM'.
+       01  GENApool                  PIC X(8)  VALUE 'GENA'.
       * Variables for time/date processing
        01  WS-ABSTIME                  PIC S9(8) COMP VALUE +0.
        01  WS-TIME                     PIC X(8)  VALUE SPACES.
@@ -50,7 +50,7 @@
            03 FILLER                   PIC X(9)  VALUE ' LGACDB01'.
            03 EM-VARIABLE.
              05 FILLER                 PIC X(6)  VALUE ' CNUM='.
-             05 EM-CUSNUM              PIC X(10)  VALUE SPACES.
+             05 EM-CUSNUM              PIC X(10) VALUE SPACES.
              05 EM-SQLREQ              PIC X(16) VALUE SPACES.
              05 FILLER                 PIC X(9)  VALUE ' SQLCODE='.
              05 EM-SQLRC               PIC +9(5) USAGE DISPLAY.
@@ -71,9 +71,9 @@
        77 LGACDB02                     PIC X(8)  VALUE 'LGACDB02'.
        77 LGACVS01                     PIC X(8)  VALUE 'LGACVS01'.
        77 LGAC-NCS                     PIC X(2)  VALUE 'ON'.
-       77 WS-CS-PASSWORD               PIC X(16) Value 'NewPass'.
+       77 WS-CS-PASSWORD               PIC X(16) VALUE 'NewPass'.
        77 WS-CS-STATE                  PIC X     VALUE 'N'.
-       77 WS-CA-COUNT                  PIC S9(9) COMP  Value 0.
+       77 WS-CA-COUNT                  PIC S9(9) COMP  VALUE 0.
 
       *----------------------------------------------------------------*
       * Definitions required for data manipulation                     *
@@ -130,14 +130,29 @@
       *----------------------------------------------------------------*
       * Common code                                                    *
       *----------------------------------------------------------------*
-      * initialize working storage variables
-           INITIALIZE WS-HEADER.
+      * COMPILATION ERROR 1: Misspelled COBOL verb
+           INITIALIZ WS-HEADER.
+
       * set up general variable
            MOVE EIBTRNID TO WS-TRANSID.
            MOVE EIBTRMID TO WS-TERMID.
            MOVE EIBTASKN TO WS-TASKNUM.
       *----------------------------------------------------------------*
 
+      * COMPILATION ERROR 2: Reference to undeclared identifier
+           MOVE WS-UNDECLARED-FIELD TO WS-TRANSID.
+
+      * STATIC ANALYSIS VIOLATION 1 (SOC1-001): Obsolete ALTER verb used
+           ALTER OLD-PARAGRAPH TO PROCEED TO MAINLINE-EXIT.
+
+      * STATIC ANALYSIS VIOLATION 2 (SOC4-003): Pointer used without NULL check
+           SET ADDRESS OF DFHCOMMAREA TO WS-ADDR-DFHCOMMAREA.
+
+      * STATIC ANALYSIS VIOLATION 3 (SOC3-001): Division without zero check
+           COMPUTE WS-CALEN = WS-RESP / WS-CA-COUNT.
+
+      * STATIC ANALYSIS VIOLATION 4 (OVF-002): Truncation - move larger to smaller
+           MOVE D2-CUSTOMER-NUM TO WS-CALEN.
 
       * initialize DB2 host variables
            INITIALIZE DB2-OUT-INTEGERS.
@@ -147,7 +162,8 @@
       *----------------------------------------------------------------*
       * If NO commarea received issue an ABEND
            IF EIBCALEN IS EQUAL TO ZERO
-               MOVE ' NO COMMAREA RECEIVED' TO EM-VARIABLE
+      * COMPILATION ERROR 3: Unclosed string literal
+               MOVE 'NO COMMAREA RECEIVED TO EM-VARIABLE
                PERFORM WRITE-ERROR-MESSAGE
                EXEC CICS ABEND ABCODE('LGCA') NODUMP END-EXEC
            END-IF
@@ -193,6 +209,9 @@
 
        MAINLINE-EXIT.
            EXIT.
+
+       OLD-PARAGRAPH.
+           GO TO MAINLINE-EXIT.
       *----------------------------------------------------------------*
 
 
