@@ -1,4 +1,5 @@
 import os
+import sys  # <--- Added import
 import json
 import asyncio
 import base64
@@ -67,7 +68,7 @@ async def heal_cobol_fd_section(cobol_content: str, file_specs: list) -> str:
     )
     return response.content[0].text.replace("```cobol", "").replace("```", "").strip()
 
-async def run_mcp_pipeline_poc(session, modified_code: str):
+async def run_mcp_pipeline_poc(session, original_code: str, modified_code: str):
     clean_name = program_name.replace('.cbl', '').upper().strip()
     final_code = modified_code
     jcl_content, jcl_path = None, None
@@ -102,9 +103,9 @@ async def run_mcp_pipeline_poc(session, modified_code: str):
                     jcl_content, jcl_path = content, path
                     break
     except Exception as e:
-        print(f"[WARN] JCL directory not found or unreachable ({e}). Proceeding without JCL healing.")
+        print(f"[WARN] JCL directory search skipped ({e}). Proceeding without JCL healing.")
 
-    # 2. Heal COBOL code if JCL was found, otherwise keep static analysis result
+    # 2. Perform FD healing if JCL is found
     if jcl_content:
         print(f"[INFO] Found matching JCL at '{jcl_path}'. Performing FD section healing...")
         jcl_datasets = await extract_jcl_dd_allocations(jcl_content, program_name)
@@ -113,10 +114,17 @@ async def run_mcp_pipeline_poc(session, modified_code: str):
     else:
         print(f"[INFO] No matching JCL found for PGM={clean_name}. Proceeding with static analysis fixes.")
 
-    # 3. Always commit the final result (static analysis only OR static analysis + JCL healed)
-    await code_commit(session, final_code)
+    # 3. Check code diff & set exit codes
+    if final_code.strip() != original_code.strip():
+        print("[INFO] Code changes detected! Creating branch and Pull Request...")
+        pr_url = await code_commit(session, final_code)
+        print(f"[ACTION REQUIRED] Pull Request opened: {pr_url}")
+        sys.exit(10)  # Return Code 10 -> PR Created
+    else:
+        print("[INFO] Code adheres to rules. No changes required.")
+        sys.exit(0)   # Return Code 0 -> Success / No PR Needed
 
-async def static_analysis_check(session) -> str:
+async def static_analysis_check(session) -> tuple[str, str]:
     file_path = f"src/{program_name}"
     cleaned_path = "/".join(part.strip() for part in file_path.split("/"))
     print(f"DEBUG - Cleaned file_path: {repr(cleaned_path)}")
@@ -139,7 +147,8 @@ async def static_analysis_check(session) -> str:
         system=static_analysis_prompt,
         messages=[MessageParam(role="user", content=f"COBOL:\n{cobol_code}\n\nRules:\n{z}")]
     )
-    return response.content[0].text.strip()
+    modified_code = response.content[0].text.strip()
+    return cobol_code, modified_code
 
 async def github_connection():
     env = os.environ.copy()
@@ -148,10 +157,10 @@ async def github_connection():
     async with stdio_client(server_params) as (read, write):
         async with ClientSession(read, write) as session:
             await session.initialize()
-            modified_code = await static_analysis_check(session)
-            await run_mcp_pipeline_poc(session, modified_code)
+            original_code, modified_code = await static_analysis_check(session)
+            await run_mcp_pipeline_poc(session, original_code, modified_code)
 
-async def code_commit(session, modified_file):
+async def code_commit(session, modified_file) -> str:
     timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
     new_branch = f"feature-static-analysis-{timestamp}"
     await session.call_tool("create_branch", arguments={"owner": REPO_OWNER, "repo": REPO_NAME, "branch": new_branch, "from_branch": "main"})
@@ -159,10 +168,19 @@ async def code_commit(session, modified_file):
         "create_or_update_file",
         arguments={"owner": REPO_OWNER, "repo": REPO_NAME, "path": f"src/{program_name}", "content": modified_file, "message": "Applying static patches", "branch": new_branch}
     )
-    await session.call_tool(
+    pr_res = await session.call_tool(
         "create_pull_request",
         arguments={"owner": REPO_OWNER, "repo": REPO_NAME, "title": f"Static Analysis Fixes ({timestamp})", "body": "Applying strict structural formatting rules", "head": new_branch, "base": "main"}
     )
+    
+    pr_url = f"https://github.com/{REPO_OWNER}/{REPO_NAME}/pulls"
+    try:
+        parsed = json.loads(pr_res.content[0].text)
+        pr_url = parsed.get("html_url") or parsed.get("url") or pr_url
+    except Exception:
+        pass
+        
+    return pr_url
 
 if __name__ == "__main__":
     asyncio.run(github_connection())
