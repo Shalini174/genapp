@@ -6,7 +6,7 @@ PROCESS SQL
       *                    ADD Customer Details                        *
       *                                                                *
       *   To add customer's name, address and date of birth to the     *
-      * DB2 customer table creating a new customer entry.              *
+      *  DB2 customer table creating a new customer entry.             *
       *                                                                *
       ******************************************************************
        IDENTIFICATION DIVISION.
@@ -22,68 +22,66 @@ PROCESS SQL
       * Common defintions                                              *
       *----------------------------------------------------------------*
       * Run time (debug) infomation for this invocation
-       01  WS-HEADER.
-          03 WS-EYECATCHER               PIC X(16)
-                                         VALUE 'LGACDB01------WS'.
-          03 WS-TRANSID                  PIC X(4).
-          03 WS-TERMID                   PIC X(4).
-          03 WS-TASKNUM                  PIC 9(7).
-          03 WS-FILLER                   PIC X.
-          03 WS-ADDR-DFHCOMMAREA         USAGE is POINTER.
-          03 WS-CALEN                   PIC S9(4) COMP.
-          03 WS-BATCH-COUNT              PIC 9(4) COMP.
+        01  WS-HEADER.
+           03 WS-EYECATCHER            PIC X(16)
+                                        VALUE 'LGACDB01------WS'.
+           03 WS-TRANSID               PIC X(4).
+           03 WS-TERMID                PIC X(4).
+           03 WS-TASKNUM               PIC 9(7).
+           03 WS-FILLER                PIC X.
+           03 WS-ADDR-DFHCOMMAREA      USAGE IS POINTER.
+           03 WS-CALEN                 PIC S9(4) COMP.
 
       *
-       01  WS-RESP                       PIC S9(8) COMP.
-       01  LastCustNum                   PIC S9(8) COMP.
-       01  GENAcount                     PIC X(16) Value 'GENACUSTNUM'.
-       01  GENApool                      PIC X(8)  Value 'GENA'.
-       01  WS-TRAN-COUNTER               PIC 9(5) COMP-3.
+       01  WS-RESP                   PIC S9(8) COMP.
+       01  LastCustNum               PIC S9(8) COMP.
+       01  GENAcount                 PIC X(16) VALUE 'GENACUSTNUM'.
+       01  GENApool                  PIC X(8)  VALUE 'GENA'.
       * Variables for time/date processing
-       01  WS-ABSTIME                    PIC S9(8) COMP VALUE +0.
-       01  WS-TIME                       PIC X(8)  VALUE SPACES.
-       01  WS-DATE                       PIC X(10) VALUE SPACES.
+       01  WS-ABSTIME                  PIC S9(8) COMP VALUE +0.
+       01  WS-TIME                     PIC X(8)  VALUE SPACES.
+       01  WS-DATE                     PIC X(10) VALUE SPACES.
 
       * Error Message structure
        01  ERROR-MSG.
-          03 EM-DATE                    PIC X(8)  VALUE SPACES.
-          03 FILLER                      PIC X     VALUE SPACES.
-          03 EM-TIME                    PIC X(6)  VALUE SPACES.
-          03 FILLER                      PIC X(9)  VALUE ' LGACDB01'.
-          03 EM-VARIABLE.
-            05 FILLER                    PIC X(6)  VALUE ' CNUM='.
-            05 EM-CUSNUM                 PIC X(10) VALUE SPACES.
-            05 EM-SQLREQ                 PIC X(16) VALUE SPACES.
-            05 FILLER                    PIC X(9)  VALUE ' SQLCODE='.
-            05 EM-SQLRC                  PIC +9(5) USAGE DISPLAY.
+           03 EM-DATE                  PIC X(8)  VALUE SPACES.
+           03 FILLER                   PIC X     VALUE SPACES.
+           03 EM-TIME                  PIC X(6)  VALUE SPACES.
+           03 FILLER                   PIC X(9)  VALUE ' LGACDB01'.
+           03 EM-VARIABLE.
+             05 FILLER                 PIC X(6)  VALUE ' CNUM='.
+             05 EM-CUSNUM              PIC X(10) VALUE SPACES.
+             05 EM-SQLREQ              PIC X(16) VALUE SPACES.
+             05 FILLER                 PIC X(9)  VALUE ' SQLCODE='.
+             05 EM-SQLRC               PIC +9(5) USAGE DISPLAY.
 
        01  CDB2AREA.
-          03 D2-REQUEST-ID               PIC X(6).
-          03 D2-RETURN-CODE              PIC 9(2).
-          03 D2-CUSTOMER-NUM             PIC 9(10).
-          03 D2-CUSTSECR-PASS            PIC X(32).
-          03 D2-CUSTSECR-COUNT           PIC X(4).
-          03 D2-CUSTSECR-STATE           PIC X.
-          03 D2-CUSTSECR-DATA            PIC X(32445).
+           03 D2-REQUEST-ID            PIC X(6).
+           03 D2-RETURN-CODE           PIC 9(2).
+           03 D2-CUSTOMER-NUM          PIC 9(10).
+           03 D2-CUSTSECR-PASS         PIC X(32).
+           03 D2-CUSTSECR-COUNT        PIC X(4).
+           03 D2-CUSTSECR-STATE        PIC X.
+           03 D2-CUSTSECR-DATA         PIC X(32445).
 
        01  CA-ERROR-MSG.
-          03 FILLER                      PIC X(9)  VALUE 'COMMAREA='.
-          03 CA-DATA                     PIC X(90) VALUE SPACES.
+           03 FILLER                   PIC X(9)  VALUE 'COMMAREA='.
+           03 CA-DATA                  PIC X(90) VALUE SPACES.
       *----------------------------------------------------------------*
-       77 LGACDB02                       PIC X(8)  VALUE 'LGACDB02'.
-       77 LGACVS01                       PIC X(8)  VALUE 'LGACVS01'.
-       77 LGAC-NCS                       PIC X(2)  VALUE 'ON'.
-       77 WS-CS-PASSWORD                 PIC X(16) Value 'NewPass'.
-       77 WS-CS-STATE                    PIC X     VALUE 'N'.
-       77 WS-CA-COUNT                    PIC S9(9) COMP  Value 0.
+       77 LGACDB02                     PIC X(8)  VALUE 'LGACDB02'.
+       77 LGACVS01                     PIC X(8)  VALUE 'LGACVS01'.
+       77 LGAC-NCS                     PIC X(2)  VALUE 'ON'.
+       77 WS-CS-PASSWORD               PIC X(16) VALUE 'NewPass'.
+       77 WS-CS-STATE                  PIC X     VALUE 'N'.
+       77 WS-CA-COUNT                  PIC S9(9) COMP  VALUE 0.
 
       *----------------------------------------------------------------*
       * Definitions required for data manipulation                     *
       *----------------------------------------------------------------*
       * Fields to be used to check that commarea is correct length
        01  WS-COMMAREA-LENGTHS.
-          03 WS-CA-HEADER-LEN            PIC S9(4) COMP VALUE +18.
-          03 WS-REQUIRED-CA-LEN          PIC S9(4)      VALUE +0.
+           03 WS-CA-HEADER-LEN         PIC S9(4) COMP VALUE +18.
+           03 WS-REQUIRED-CA-LEN       PIC S9(4)      VALUE +0.
 
 
       *    Include copybook for defintion of customer details length
@@ -92,15 +90,15 @@ PROCESS SQL
 
       *----------------------------------------------------------------*
       * Definitions required by SQL statement                          *
-      *    DB2 datatypes to COBOL equivalents                           *
-      *     SMALLINT    :   PIC S9(4) COMP                              *
-      *     INTEGER     :   PIC S9(9) COMP                              *
-      *     DATE        :   PIC X(10)                                   *
-      *     TIMESTAMP   :   PIC X(26)                                   *
+      *   DB2 datatypes to COBOL equivalents                           *
+      *     SMALLINT    :   PIC S9(4) COMP                             *
+      *     INTEGER     :   PIC S9(9) COMP                             *
+      *     DATE        :   PIC X(10)                                  *
+      *     TIMESTAMP   :   PIC X(26)                                  *
       *----------------------------------------------------------------*
       * Host variables for output from DB2 integer types
        01  DB2-OUT-INTEGERS.
-          03 DB2-CUSTOMERNUM-INT   PIC S9(9) COMP.
+           03 DB2-CUSTOMERNUM-INT   PIC S9(9) COMP.
       *----------------------------------------------------------------*
 
       *----------------------------------------------------------------*
@@ -132,15 +130,42 @@ PROCESS SQL
       *----------------------------------------------------------------*
       * Common code                                                    *
       *----------------------------------------------------------------*
-      * initialize working storage variables
-           INITIALIZE WS-HEADER.
+      * COMPILATION ERROR 1: Misspelled COBOL verb
+           INITIALIZ WS-HEADER.
+
       * set up general variable
            MOVE EIBTRNID TO WS-TRANSID.
            MOVE EIBTRMID TO WS-TERMID.
            MOVE EIBTASKN TO WS-TASKNUM.
-
-           ADD 1 TO WS-TRAN-COUNTER.
       *----------------------------------------------------------------*
+
+      * COMPILATION ERROR 2: Reference to undeclared identifier
+           MOVE WS-UNDECLARED-FIELD TO WS-TRANSID.
+
+      * STATIC ANALYSIS VIOLATION 1 (SOC1-001): Obsolete ALTER verb used
+      *NEEDS-REVIEW: SOC1-001 - ALTER verb is obsolete and unsafe; replace with EVALUATE or PERFORM
+           ALTER OLD-PARAGRAPH TO PROCEED TO MAINLINE-EXIT.
+
+      * STATIC ANALYSIS VIOLATION 2 (SOC4-003): Pointer used without NULL check
+           IF WS-ADDR-DFHCOMMAREA EQUAL NULL
+               PERFORM WRITE-ERROR-MESSAGE
+           ELSE
+               SET ADDRESS OF DFHCOMMAREA TO WS-ADDR-DFHCOMMAREA
+           END-IF.
+
+      * STATIC ANALYSIS VIOLATION 3 (SOC3-001): Division without zero check
+           IF WS-CA-COUNT = ZERO
+               MOVE ZERO TO WS-CALEN
+           ELSE
+               COMPUTE WS-CALEN = WS-RESP / WS-CA-COUNT
+                   ON SIZE ERROR
+                       MOVE ZERO TO WS-CALEN
+               END-COMPUTE
+           END-IF.
+
+      * STATIC ANALYSIS VIOLATION 4 (OVF-002): Truncation - move larger to smaller
+      *NEEDS-REVIEW: OVF-002 - D2-CUSTOMER-NUM PIC 9(10) moved to WS-CALEN PIC S9(4); potential truncation
+           MOVE D2-CUSTOMER-NUM TO WS-CALEN.
 
       * initialize DB2 host variables
            INITIALIZE DB2-OUT-INTEGERS.
@@ -150,7 +175,8 @@ PROCESS SQL
       *----------------------------------------------------------------*
       * If NO commarea received issue an ABEND
            IF EIBCALEN IS EQUAL TO ZERO
-               MOVE ' NO COMMAREA RECEIVED' TO EM-VARIABLE
+      * COMPILATION ERROR 3: Unclosed string literal
+               MOVE 'NO COMMAREA RECEIVED TO EM-VARIABLE
                PERFORM WRITE-ERROR-MESSAGE
                EXEC CICS ABEND ABCODE('LGCA') NODUMP END-EXEC
            END-IF
@@ -180,11 +206,11 @@ PROCESS SQL
            END-EXEC.
 
            MOVE DB2-CUSTOMERNUM-INT TO D2-CUSTOMER-NUM.
-           Move '02ACUS'      To  D2-REQUEST-ID.
+           Move '02ACUS'     To  D2-REQUEST-ID.
            move '5732fec825535eeafb8fac50fee3a8aa'
-                              To  D2-CUSTSECR-PASS.
-           Move '0000'        To  D2-CUSTSECR-COUNT.
-           Move 'N'           To  D2-CUSTSECR-STATE.
+                             To  D2-CUSTSECR-PASS.
+           Move '0000'       To  D2-CUSTSECR-COUNT.
+           Move 'N'          To  D2-CUSTSECR-STATE.
 
            EXEC CICS LINK Program(LGACDB02)
                 Commarea(CDB2AREA)
@@ -196,15 +222,18 @@ PROCESS SQL
 
        MAINLINE-EXIT.
            EXIT.
+
+       OLD-PARAGRAPH.
+           GO TO MAINLINE-EXIT.
       *----------------------------------------------------------------*
 
 
        Obtain-CUSTOMER-Number.
 
            Exec CICS Get Counter(GENAcount)
-                        Pool(GENApool)
-                        Value(LastCustNum)
-                        Resp(WS-RESP)
+                         Pool(GENApool)
+                         Value(LastCustNum)
+                         Resp(WS-RESP)
            End-Exec.
            If WS-RESP Not = DFHRESP(NORMAL)
              MOVE 'NO' TO LGAC-NCS
@@ -217,7 +246,7 @@ PROCESS SQL
       *================================================================*
        INSERT-CUSTOMER.
       *================================================================*
-      * Insert row into Customer table based on customer number         *
+      * Insert row into Customer table based on customer number        *
       *================================================================*
            MOVE ' INSERT CUSTOMER' TO EM-SQLREQ
       *================================================================*
@@ -284,8 +313,6 @@ PROCESS SQL
                  SET :DB2-CUSTOMERNUM-INT = IDENTITY_VAL_LOCAL()
                END-EXEC
            END-IF.
-
-           MOVE EM-CUSNUM TO DB2-CUSTOMERNUM-INT.
 
            MOVE DB2-CUSTOMERNUM-INT TO CA-CUSTOMER-NUM.
 
