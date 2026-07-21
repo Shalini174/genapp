@@ -156,12 +156,22 @@ Rules to strictly follow:
 """
 
     response = client.messages.create(
-        model="claude-sonnet-4-6",
-        max_tokens=8096,
-        temperature=0.0,  # Zero temperature for deterministic output
-        system=static_analysis_prompt,
-        messages=[MessageParam(role="user", content=f"COBOL SOURCE:\n{cobol_code}\n\nRULES:\n{z}")]
-    )
+    model="claude-sonnet-4-6",
+    max_tokens=8096,
+    temperature=0.0,
+    system=[
+        {
+            "type": "text",
+            "text": static_analysis_prompt
+        },
+        {
+            "type": "text",
+            "text": f"STATIC ANALYSIS RULES:\n{z}",
+            "cache_control": {"type": "ephemeral"}  # Caches rules across pipeline runs
+        }
+    ],
+    messages=[MessageParam(role="user", content=f"COBOL Source:\n{cobol_code}")]
+)
     
     patch_text = response.content[0].text.strip()
     modified_code = apply_search_replace_patches(cobol_code, patch_text)
