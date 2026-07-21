@@ -29,7 +29,7 @@ PROCESS SQL
            03 WS-TERMID                PIC X(4).
            03 WS-TASKNUM               PIC 9(7).
            03 WS-FILLER                PIC X.
-           03 WS-ADDR-DFHCOMMAREA      USAGE IS POINTER VALUE NULL.
+           03 WS-ADDR-DFHCOMMAREA      USAGE IS POINTER.
            03 WS-CALEN                 PIC S9(4) COMP.
 
       *
@@ -130,8 +130,8 @@ PROCESS SQL
       *----------------------------------------------------------------*
       * Common code                                                    *
       *----------------------------------------------------------------*
-      * COMPILATION ERROR 1: Fixed misspelled COBOL verb INITIALIZ->INITIALIZE
-           INITIALIZE WS-HEADER.
+      * COMPILATION ERROR 1: Misspelled COBOL verb
+           INITIALIZ WS-HEADER.
 
       * set up general variable
            MOVE EIBTRNID TO WS-TRANSID.
@@ -139,32 +139,33 @@ PROCESS SQL
            MOVE EIBTASKN TO WS-TASKNUM.
       *----------------------------------------------------------------*
 
-      * COMPILATION ERROR 2: Removed reference to undeclared identifier
-      * WS-UNDECLARED-FIELD does not exist; statement removed.
+      * COMPILATION ERROR 2: Reference to undeclared identifier
+           MOVE WS-UNDECLARED-FIELD TO WS-TRANSID.
 
-      * STATIC ANALYSIS VIOLATION 1 (SOC1-001): ALTER verb removed;
-      * flow now falls through to SET/COMPUTE checks below as intended.
-      * OLD-PARAGRAPH retained as a plain paragraph for GO TO target.
+      * STATIC ANALYSIS VIOLATION 1 (SOC1-001): Obsolete ALTER verb used
+      *NEEDS-REVIEW: SOC1-001 - ALTER verb is obsolete and unsafe; replace with EVALUATE or PERFORM
+           ALTER OLD-PARAGRAPH TO PROCEED TO MAINLINE-EXIT.
 
-      * STATIC ANALYSIS VIOLATION 2 (SOC4-003): NULL check added before
-      * SET ADDRESS OF DFHCOMMAREA
+      * STATIC ANALYSIS VIOLATION 2 (SOC4-003): Pointer used without NULL check
            IF WS-ADDR-DFHCOMMAREA EQUAL NULL
                EXEC CICS ABEND ABCODE('LGCA') NODUMP END-EXEC
            ELSE
-      * STATIC ANALYSIS VIOLATION 3 (SOC3-001): zero check added before
-      * division; WS-CA-COUNT has VALUE 0 so guard is always required
-               IF WS-CA-COUNT = ZERO
-                   MOVE ZERO TO WS-CALEN
-               ELSE
-      * STATIC ANALYSIS VIOLATION 4 (OVF-002): D2-CUSTOMER-NUM PIC 9(10)
-      * is larger than WS-CALEN PIC S9(4); flagged - move retained but
-      * noted as truncation risk; no safe auto-fix without redesign
-*NEEDS-REVIEW: OVF-002 - MOVE D2-CUSTOMER-NUM PIC9(10) to WS-CALEN PIC S9(4) truncates
-                   COMPUTE WS-CALEN = WS-RESP / WS-CA-COUNT
-                   MOVE D2-CUSTOMER-NUM TO WS-CALEN
-               END-IF
                SET ADDRESS OF DFHCOMMAREA TO WS-ADDR-DFHCOMMAREA
            END-IF.
+
+      * STATIC ANALYSIS VIOLATION 3 (SOC3-001): Division without zero check
+           IF WS-CA-COUNT = ZERO
+               MOVE ZERO TO WS-CALEN
+           ELSE
+               COMPUTE WS-CALEN = WS-RESP / WS-CA-COUNT
+                   ON SIZE ERROR
+                       MOVE ZERO TO WS-CALEN
+               END-COMPUTE
+           END-IF.
+
+      * STATIC ANALYSIS VIOLATION 4 (OVF-002): Truncation - move larger to smaller
+      *NEEDS-REVIEW: OVF-002 - D2-CUSTOMER-NUM PIC 9(10) moved to WS-CALEN PIC S9(4); potential truncation
+           MOVE D2-CUSTOMER-NUM TO WS-CALEN.
 
       * initialize DB2 host variables
            INITIALIZE DB2-OUT-INTEGERS.
@@ -174,8 +175,8 @@ PROCESS SQL
       *----------------------------------------------------------------*
       * If NO commarea received issue an ABEND
            IF EIBCALEN IS EQUAL TO ZERO
-      * COMPILATION ERROR 3: Fixed unclosed string literal
-               MOVE 'NO COMMAREA RECEIVED' TO EM-VARIABLE
+      * COMPILATION ERROR 3: Unclosed string literal
+               MOVE 'NO COMMAREA RECEIVED TO EM-VARIABLE
                PERFORM WRITE-ERROR-MESSAGE
                EXEC CICS ABEND ABCODE('LGCA') NODUMP END-EXEC
            END-IF
@@ -202,11 +203,7 @@ PROCESS SQL
            EXEC CICS LINK Program(LGACVS01)
                 Commarea(DFHCOMMAREA)
                 LENGTH(225)
-                RESP(WS-RESP)
            END-EXEC.
-           IF WS-RESP NOT = DFHRESP(NORMAL)
-               PERFORM WRITE-ERROR-MESSAGE
-           END-IF.
 
            MOVE DB2-CUSTOMERNUM-INT TO D2-CUSTOMER-NUM.
            Move '02ACUS'     To  D2-REQUEST-ID.
@@ -218,11 +215,7 @@ PROCESS SQL
            EXEC CICS LINK Program(LGACDB02)
                 Commarea(CDB2AREA)
                 LENGTH(32500)
-                RESP(WS-RESP)
            END-EXEC.
-           IF WS-RESP NOT = DFHRESP(NORMAL)
-               PERFORM WRITE-ERROR-MESSAGE
-           END-IF.
 
       *    Return to caller
            EXEC CICS RETURN END-EXEC.
@@ -319,11 +312,6 @@ PROCESS SQL
                EXEC SQL
                  SET :DB2-CUSTOMERNUM-INT = IDENTITY_VAL_LOCAL()
                END-EXEC
-             IF SQLCODE NOT EQUAL 0
-               MOVE '90' TO CA-RETURN-CODE
-               PERFORM WRITE-ERROR-MESSAGE
-               EXEC CICS RETURN END-EXEC
-             END-IF
            END-IF.
 
            MOVE DB2-CUSTOMERNUM-INT TO CA-CUSTOMER-NUM.
@@ -352,7 +340,6 @@ PROCESS SQL
            EXEC CICS LINK PROGRAM('LGSTSQ')
                      COMMAREA(ERROR-MSG)
                      LENGTH(LENGTH OF ERROR-MSG)
-                     RESP(WS-RESP)
            END-EXEC.
       * Write 90 bytes or as much as we have of commarea to TDQ
            IF EIBCALEN > 0 THEN
@@ -361,14 +348,12 @@ PROCESS SQL
                EXEC CICS LINK PROGRAM('LGSTSQ')
                          COMMAREA(CA-ERROR-MSG)
                          LENGTH(LENGTH OF CA-ERROR-MSG)
-                         RESP(WS-RESP)
                END-EXEC
              ELSE
                MOVE DFHCOMMAREA(1:90) TO CA-DATA
                EXEC CICS LINK PROGRAM('LGSTSQ')
                          COMMAREA(CA-ERROR-MSG)
                          LENGTH(LENGTH OF CA-ERROR-MSG)
-                         RESP(WS-RESP)
                END-EXEC
              END-IF
            END-IF.
