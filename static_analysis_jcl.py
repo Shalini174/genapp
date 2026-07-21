@@ -127,28 +127,60 @@ async def run_mcp_pipeline_poc(session, original_code: str, modified_code: str):
 async def static_analysis_check(session) -> tuple[str, str]:
     file_path = f"src/{program_name}"
     cleaned_path = "/".join(part.strip() for part in file_path.split("/"))
-    print(f"DEBUG - Cleaned file_path: {repr(cleaned_path)}")
-    mcp_result = await session.call_tool("get_file_contents", arguments={"owner": REPO_OWNER, "repo": REPO_NAME, "path": cleaned_path, "branch": "main"})
+    mcp_result = await session.call_tool(
+        "get_file_contents", 
+        arguments={"owner": REPO_OWNER, "repo": REPO_NAME, "path": cleaned_path, "branch": "main"}
+    )
     raw_content = json.loads(mcp_result.content[0].text).get("content", "")
-    
     cobol_code = base64.b64decode(raw_content.replace("\n", "")).decode("utf-8") if "DIVISION" not in raw_content.upper() else raw_content
     
-    if not os.path.exists(rules):
-        with open(rules, "w") as f: f.write("Rule 1: Adhere to structural fixed alignment margins.")
-        
-    with open(rules, "r") as f: z = f.read()
+    with open(rules, "r") as f: 
+        z = f.read()
 
     static_analysis_prompt = """You are an expert IBM Mainframe COBOL static analysis specialist.
-    Return ONLY the raw modified COBOL source. No markdown, no code blocks or conversational text.
-    """
+Analyze the provided COBOL source code against the static analysis rules.
+Do NOT regenerate the entire COBOL file. Instead, output ONLY Search & Replace blocks for lines that violate rules.
+
+Format every edit strictly as:
+<<<<<<< SEARCH
+[Exact original lines from source code to replace]
+=======
+[Corrected lines adhering strictly to 8-72 column alignment]
+>>>>>>>
+
+Rules to strictly follow:
+1. Preserve exact line order. Fix violations IN-PLACE right where they occur in the original code.
+2. Apply the smallest possible change. Do not move statements to higher paragraphs.
+3. Keep standard COBOL fixed format (columns 8-72).
+4. Output ONLY the search/replace blocks. No explanations, no markdown wrappers outside blocks.
+"""
+
     response = client.messages.create(
         model="claude-sonnet-4-6",
         max_tokens=8096,
+        temperature=0.0,  # Zero temperature for deterministic output
         system=static_analysis_prompt,
-        messages=[MessageParam(role="user", content=f"COBOL:\n{cobol_code}\n\nRules:\n{z}")]
+        messages=[MessageParam(role="user", content=f"COBOL SOURCE:\n{cobol_code}\n\nRULES:\n{z}")]
     )
-    modified_code = response.content[0].text.strip()
+    
+    patch_text = response.content[0].text.strip()
+    modified_code = apply_search_replace_patches(cobol_code, patch_text)
     return cobol_code, modified_code
+
+
+def apply_search_replace_patches(original_code: str, patch_text: str) -> str:
+    """Applies <<<<<<< SEARCH ... ======= ... >>>>>>> blocks sequentially."""
+    pattern = re.compile(r"<<<<<<< SEARCH\n(.*?)\n=======\n(.*?)\n>>>>>>>", re.DOTALL)
+    matches = pattern.findall(patch_text)
+    
+    updated_code = original_code
+    for search_block, replace_block in matches:
+        if search_block in updated_code:
+            updated_code = updated_code.replace(search_block, replace_block, 1)
+        else:
+            print(f"[WARN] Could not match search block in source:\n{search_block[:50]}...")
+            
+    return updated_code
 
 async def github_connection():
     env = os.environ.copy()
